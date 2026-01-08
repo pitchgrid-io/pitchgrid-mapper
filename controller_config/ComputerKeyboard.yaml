@@ -1,0 +1,20 @@
+DeviceName: "Computer Keyboard"
+MIDIDeviceName: none
+virtualMIDIDeviceName: "PitchGrid Computer Keyboard"
+isMPE: false
+hasGlobalPitchBend: false
+NumRows: 4
+FirstRowIdx: 0
+RowLengths: [10, 11, 13, 12]
+RowOffsets: [0,0,0]
+HorizonToRowAngle: 0.0
+RowToColAngle: 112.62
+xSpacing: 19.0
+ySpacing: 20.58
+fixedLabels:
+  - ["Z","X","C","V","B","N","M",",",".","/"]
+  - ["A","S","D","F","G","H","J","K","L",";","'"]
+  - ["Q","W","E","R","T","Y","U","I","O","P","[","]","\\"]
+  - ["1","2","3","4","5","6","7","8","9","0","_","="]
+keyIndex: "30 + cumulativeIndex(x, y)"
+defaultIsoRootCoordinate: [0,0]

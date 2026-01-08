@@ -1,0 +1,62 @@
+DeviceName: "LinnStrument 128"
+MIDIDeviceName: "LinnStrument MIDI"
+isMPE: true
+hasGlobalPitchBend: false
+NumRows: 8
+FirstRowIdx: 0
+RowLengths: [16, 16, 16, 16, 16, 16, 16, 16]
+RowOffsets: [0, 0, 0, 0, 0, 0, 0]
+HorizonToRowAngle: 0.0
+RowToColAngle: 90.0
+xSpacing: 19.0
+ySpacing: 19.0
+params:
+  color:
+    type: "enum"
+    name: "Pad Color"
+    values:
+      0: 
+        name: "Reset"
+        rgb: [0, 0, 0]
+      1: 
+        name: "Red"
+        rgb: [255, 0, 0]
+      2: 
+        name: "Yellow"
+        rgb: [255, 255, 0]
+      3: 
+        name: "Green"
+        rgb: [0, 255, 0]
+      4: 
+        name: "Cyan"
+        rgb: [0, 255, 255]
+      5: 
+        name: "Blue"
+        rgb: [0, 0, 255]
+      6: 
+        name: "Magenta"
+        rgb: [255, 0, 255]
+      7: 
+        name: "Off"
+        rgb: [0, 0, 0]
+      8: 
+        name: "White"
+        rgb: [255, 255, 255]
+      9: 
+        name: "Orange"
+        rgb: [255, 127, 0]
+      10: 
+        name: "Lime"
+        rgb: [127, 255, 0]
+      11: 
+        name: "Pink"
+        rgb: [255, 0, 127]
+SetPadColor: "176 20 {x} 176 21 {7-y} 176 22 {color}"
+MSB: "(x>>7) & 0x7F"
+LSB: "x & 0x7F"
+NRPN: "176 99 MSB(x) 176 98 LSB(x) 176 6 MSB(y) 176 38 LSB(y) 176 101 127 176 100 127"
+SetPadNotesBulk: "NRPN(227, 13) NRPN(263, 0) NRPN(264, 16) NRPN(265, 32) NRPN(266, 48) NRPN(267, 64) NRPN(268, 80) NRPN(269, 96) NRPN(270, 112)"
+virtualMIDIDeviceName: "PitchGrid LinnStrument 128"
+noteToCoordX: "noteNumber % 16"
+noteToCoordY: "noteNumber // 16"
+defaultIsoRootCoordinate: [5,3]

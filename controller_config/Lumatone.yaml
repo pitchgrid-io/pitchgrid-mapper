@@ -1,0 +1,26 @@
+DeviceName: Lumatone
+MIDIDeviceName: Lumatone MIDI
+virtualMIDIDeviceName: PitchGrid Lumatone
+isMPE: false
+hasGlobalPitchBend: true
+NumRows: 19
+FirstRowIdx: -10
+RowLengths: [2, 5, 8, 11, 14, 17, 20, 23, 26, 28, 26, 23, 20, 17, 14, 11, 8, 5, 2]
+RowOffsets: [-3, -4, -3, -4, -3, -4, -3, -4, -3, -2, 0, -1, 0, -1, 0, -1, 0, -1]
+HorizonToRowAngle: 16.102113752
+RowToColAngle: 60.0
+xSpacing: 21.0
+ySpacing: 21.0
+MANUFACTURER_CODE: "0x00 0x21 0x50"
+CHANGE_KEY_NOTE: "0x00"
+SET_KEY_COLOUR: "0x01"
+boardIndex: "( x + y // 2)//6"
+xB0: "x - 7 * boardIndex(x, y)"
+yB0: "y + 2 * boardIndex(x, y)"
+keyIndex: "(xB0(x,y) - 5*yB0(x,y) - (yB0(x,y)+1)//2 + 43 + (5 if yB0(x,y) == 8 else 1 if yB0(x,y) == 7 else -1 if yB0(x,y) == -1 else -5 if yB0(x,y) == -2 else 0) )%56"
+typeByte: 1
+SetPadNoteAndChannel: "240 MANUFACTURER_CODE boardIndex(x, y) CHANGE_KEY_NOTE keyIndex(x, y) noteNumber midiChannel typeByte 247"
+SetPadColor: "240 MANUFACTURER_CODE boardIndex(x, y) SET_KEY_COLOUR keyIndex(x, y) red green blue 247"
+noteAssign: "30 + keyIndex(x, y)"
+channelAssign: "boardIndex(x, y)"
+defaultIsoRootCoordinate: [11, 0]

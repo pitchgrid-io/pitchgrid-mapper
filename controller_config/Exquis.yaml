@@ -1,0 +1,20 @@
+DeviceName: "Exquis"
+MIDIDeviceName: "Exquis MIDI"
+virtualMIDIDeviceName: "PitchGrid Exquis"
+isMPE: true
+hasGlobalPitchBend: false
+NumRows: 11
+FirstRowIdx: 0
+RowLengths: [6, 5, 6, 5, 6, 5, 6, 5, 6, 5, 6]
+RowOffsets: [0, -1, 0, -1, 0, -1, 0, -1, 0, -1]
+HorizonToRowAngle: 0.0
+RowToColAngle: 60.0
+xSpacing: 19.0
+ySpacing: 19.0
+keyIndex: "30 + cumulativeIndex(x, y)"
+noteAssign: "30 + cumulativeIndex(x, y)"
+BEND_RANGE: 1
+SetPadNotesBulk: "0xF0 0x00 0x21 0x7E 0x7F 0x09 0x00 0x01 BEND_RANGE 0x0E 0x00 0x00 0x01 0x01 0x00 0x00 0x00 {#for pad in pads} keyIndex(pad.x, pad.y) pad.red pad.green pad.blue {#end} 0xF7"
+SetPadColorsBulk: "0xF0 0x00 0x21 0x7E 0x7F 0x09 0x00 0x01 BEND_RANGE 0x0E 0x00 0x00 0x01 0x01 0x00 0x00 0x00 {#for pad in pads} keyIndex(pad.x, pad.y) pad.red pad.green pad.blue {#end} 0xF7"
+defaultIsoRootCoordinate: [0,5]
+

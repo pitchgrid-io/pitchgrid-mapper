@@ -1,0 +1,17 @@
+DeviceName: "Launchpad Mini MK3"
+MIDIDeviceName: "Launchpad Mini MK3 LPMiniMK3 MIDI Out"
+virtualMIDIDeviceName: "PitchGrid Launchpad Mini MK3"
+isMPE: false
+hasGlobalPitchBend: false
+NumRows: 8
+FirstRowIdx: 0
+RowLengths: [8, 8, 8, 8, 8, 8, 8, 8]
+RowOffsets: [0, 0, 0, 0, 0, 0, 0]
+HorizonToRowAngle: 0.0
+RowToColAngle: 90.0
+xSpacing: 18.0
+ySpacing: 18.0
+SetUserMode: "240 0 32 41 2 13 0 6 247"
+keyIndex: "11 + x//8 + y"
+SetPadColorsBulk: "240 0 32 41 2 13 0 {#for pad in pads} 3 keyIndex(pad.x, pad.y) pad.red pad.green pad.blue {#end} 247"
+defaultIsoRootCoordinate: [1,3]
