@@ -121,7 +121,6 @@ class TuningHandler:
             for index, node in enumerate(scale_nodes):
                 coord = (node.natural_coord.x, node.natural_coord.y)
                 self.coord_to_scale_index[coord] = index
-                print (f"Mapping coord {coord} to scale index {index}")
 
             logger.info(
                 f"MOS calculated: depth={self.depth}, mode={self.mode}, "
@@ -130,9 +129,9 @@ class TuningHandler:
             )
 
             # Output full scale coordinate -> index mapping
-            logger.info("Scale coordinate to index mapping:")
-            for coord, index in sorted(self.coord_to_scale_index.items(), key=lambda x: x[1]):
-                logger.info(f"  ({coord[0]:3d}, {coord[1]:3d}) -> index {index:3d}")
+            #logger.info("Scale coordinate to index mapping:")
+            #for coord, index in sorted(self.coord_to_scale_index.items(), key=lambda x: x[1]):
+            #    logger.info(f"  ({coord[0]:3d}, {coord[1]:3d}) -> index {index:3d}")
 
         except Exception as e:
             logger.error(f"Error calculating MOS: {e}")

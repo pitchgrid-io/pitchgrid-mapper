@@ -386,7 +386,6 @@ class MIDIHandler:
         try:
             # Parse MIDI stream into individual messages
             messages = self._parse_midi_messages(data)
-            print(messages)
 
             # Send each message with delay between them
             for i, msg in enumerate(messages):
