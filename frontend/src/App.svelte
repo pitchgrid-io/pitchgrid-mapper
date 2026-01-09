@@ -43,6 +43,31 @@
   // Track active (playing) notes by coordinate string "x,y"
   let activeNotes: Set<string> = new Set();
 
+  // Keyboard mapping: keyboard key code -> (x, y) pad coordinate
+  // Based on US QWERTY layout matching ComputerKeyboard.yaml fixedLabels
+  const keyboardMapping: Record<string, [number, number]> = {
+    // Row 0 (y=0): Z, X, C, V, B, N, M, comma, period, slash
+    'KeyZ': [0, 0], 'KeyX': [1, 0], 'KeyC': [2, 0], 'KeyV': [3, 0], 'KeyB': [4, 0],
+    'KeyN': [5, 0], 'KeyM': [6, 0], 'Comma': [7, 0], 'Period': [8, 0], 'Slash': [9, 0],
+    // Row 1 (y=1): A, S, D, F, G, H, J, K, L, semicolon, quote
+    'KeyA': [0, 1], 'KeyS': [1, 1], 'KeyD': [2, 1], 'KeyF': [3, 1], 'KeyG': [4, 1],
+    'KeyH': [5, 1], 'KeyJ': [6, 1], 'KeyK': [7, 1], 'KeyL': [8, 1], 'Semicolon': [9, 1], 'Quote': [10, 1],
+    // Row 2 (y=2): Q, W, E, R, T, Y, U, I, O, P, bracket left, bracket right, backslash
+    'KeyQ': [0, 2], 'KeyW': [1, 2], 'KeyE': [2, 2], 'KeyR': [3, 2], 'KeyT': [4, 2],
+    'KeyY': [5, 2], 'KeyU': [6, 2], 'KeyI': [7, 2], 'KeyO': [8, 2], 'KeyP': [9, 2],
+    'BracketLeft': [10, 2], 'BracketRight': [11, 2], 'Backslash': [12, 2],
+    // Row 3 (y=3): 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, minus, equal
+    'Digit1': [0, 3], 'Digit2': [1, 3], 'Digit3': [2, 3], 'Digit4': [3, 3], 'Digit5': [4, 3],
+    'Digit6': [5, 3], 'Digit7': [6, 3], 'Digit8': [7, 3], 'Digit9': [8, 3], 'Digit0': [9, 3],
+    'Minus': [10, 3], 'Equal': [11, 3],
+  };
+
+  // Track which keys are currently pressed to prevent repeat triggers
+  const pressedKeys: Set<string> = new Set();
+
+  // Track if the page has received user activation (required for keyboard capture)
+  let hasUserActivation = false;
+
   // Helper to check if controller is detected/available
   function isControllerAvailable(controllerName: string): boolean {
     if (!status) return false;
@@ -242,9 +267,78 @@
     }
   }
 
+  // Keyboard event handlers for Computer Keyboard controller
+  function handleKeyDown(event: KeyboardEvent) {
+    // Only handle if Computer Keyboard is selected
+    if (!status || status.connected_controller !== 'Computer Keyboard') return;
+
+    // Check if this is a mapped key
+    const coord = keyboardMapping[event.code];
+    if (!coord) return;
+
+    // Always prevent default for mapped keys to stop system sounds and key repeat behavior
+    event.preventDefault();
+    event.stopPropagation();
+
+    // Ignore if key is already pressed (prevent key repeat from triggering multiple note-ons)
+    if (pressedKeys.has(event.code)) return;
+
+    // Trigger note on
+    pressedKeys.add(event.code);
+    handlePadNoteOn(coord[0], coord[1]);
+  }
+
+  function handleKeyUp(event: KeyboardEvent) {
+    // Only handle if Computer Keyboard is selected
+    if (!status || status.connected_controller !== 'Computer Keyboard') return;
+
+    // Check if this is a mapped key
+    const coord = keyboardMapping[event.code];
+    if (!coord) return;
+
+    // Always prevent default for mapped keys
+    event.preventDefault();
+    event.stopPropagation();
+
+    // Check if this key was pressed (might not be if controller was switched while held)
+    if (!pressedKeys.has(event.code)) return;
+
+    // Trigger note off
+    pressedKeys.delete(event.code);
+    handlePadNoteOff(coord[0], coord[1]);
+  }
+
+  // Handle window blur - release all pressed keys
+  function handleWindowBlur() {
+    // Release all currently pressed keys
+    for (const keyCode of pressedKeys) {
+      const coord = keyboardMapping[keyCode];
+      if (coord) {
+        handlePadNoteOff(coord[0], coord[1]);
+      }
+    }
+    pressedKeys.clear();
+  }
+
+  // Handle first user interaction to enable keyboard capture
+  function handleUserActivation() {
+    if (!hasUserActivation) {
+      hasUserActivation = true;
+    }
+  }
+
   onMount(() => {
     connectWebSocket();
     fetchStatus();
+
+    // Add keyboard event listeners with capture phase to intercept before focused elements
+    document.addEventListener('keydown', handleKeyDown, { capture: true });
+    document.addEventListener('keyup', handleKeyUp, { capture: true });
+    window.addEventListener('blur', handleWindowBlur);
+
+    // Track user activation - any click or keypress activates the page
+    document.addEventListener('click', handleUserActivation, { once: true });
+    document.addEventListener('keydown', handleUserActivation, { once: true });
   });
 
   // Update selected controller when status changes
@@ -256,6 +350,11 @@
     if (ws) {
       ws.close();
     }
+
+    // Remove keyboard event listeners (must match capture option used in addEventListener)
+    document.removeEventListener('keydown', handleKeyDown, { capture: true });
+    document.removeEventListener('keyup', handleKeyUp, { capture: true });
+    window.removeEventListener('blur', handleWindowBlur);
   });
 </script>
 
@@ -296,6 +395,9 @@
           <span class="connected-indicator osc-indicator" class:osc-connected={status.osc_connected}>
             ● OSC {status.osc_connected ? 'Connected' : 'Disconnected'} (:{status.osc_port})
           </span>
+          {#if status.connected_controller === 'Computer Keyboard' && !hasUserActivation}
+            <span class="activation-hint">Click anywhere to enable keyboard</span>
+          {/if}
         </div>
       </div>
 
@@ -440,6 +542,20 @@
   .osc-indicator.osc-connected {
     color: #54cec2;
     background-color: rgba(84, 206, 194, 0.1);
+  }
+
+  .activation-hint {
+    font-size: 0.85em;
+    padding: 0.25em 0.5em;
+    border-radius: 4px;
+    color: #ffa500;
+    background-color: rgba(255, 165, 0, 0.15);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
   }
 
   button:disabled {

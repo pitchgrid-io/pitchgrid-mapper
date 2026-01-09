@@ -181,6 +181,7 @@ class WebAPI:
 
             await websocket.accept()
             self.active_connections.append(websocket)
+            logger.info(f"WebSocket client connected (total: {len(self.active_connections)})")
 
             try:
                 # Send initial state
@@ -217,8 +218,9 @@ class WebAPI:
                         logger.error(f"Error handling WebSocket message: {e}")
 
             except WebSocketDisconnect:
-                self.active_connections.remove(websocket)
-                logger.info("WebSocket client disconnected")
+                if websocket in self.active_connections:
+                    self.active_connections.remove(websocket)
+                logger.info(f"WebSocket client disconnected (remaining: {len(self.active_connections)})")
 
         # Serve frontend static files if available
         if settings.frontend_dist_dir and settings.frontend_dist_dir.exists():
