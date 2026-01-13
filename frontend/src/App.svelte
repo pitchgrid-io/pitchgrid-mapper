@@ -567,32 +567,19 @@
       {/if}
 
       {#if status.controller_pads.length > 0}
-        <ControllerCanvas
-          pads={status.controller_pads}
-          deviceName={status.connected_controller || 'Computer Keyboard'}
-          onPadNoteOn={handlePadNoteOn}
-          onPadNoteOff={handlePadNoteOff}
-          {activeNotes}
-          {padLabelType}
-        />
+        <div class="canvas-wrapper">
+          <ControllerCanvas
+            pads={status.controller_pads}
+            deviceName={status.connected_controller || 'Computer Keyboard'}
+            onPadNoteOn={handlePadNoteOn}
+            onPadNoteOff={handlePadNoteOff}
+            {activeNotes}
+            {padLabelType}
+          />
+        </div>
       {:else}
         <p>No controller loaded</p>
       {/if}
-    </div>
-
-    <div class="card">
-      <h2>Status</h2>
-      <p><strong>Virtual MIDI Device:</strong> {status.virtual_midi_device}</p>
-      <p><strong>Scale System:</strong> {status.tuning.scale_system}</p>
-      <p><strong>Layout Type:</strong> {status.layout_type}</p>
-      <p><strong>Messages Processed:</strong> {status.midi_stats.messages_processed}</p>
-      <p><strong>Notes Remapped:</strong> {status.midi_stats.notes_remapped}</p>
-    </div>
-
-    <div class="card">
-      <h2>Layout Configuration</h2>
-      <p>Layout configuration controls will be added here.</p>
-      <p>Current layout: <strong>{status.layout_type}</strong></p>
     </div>
   {:else}
     <p>Loading...</p>
@@ -602,6 +589,24 @@
 <style>
   main {
     width: 100%;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+
+  main > .card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .canvas-wrapper {
+    flex: 1;
+    min-height: 0;
+    display: flex;
   }
 
   h2 {

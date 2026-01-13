@@ -1,6 +1,5 @@
 <script lang="ts">
   import Pad from './Pad.svelte';
-  import { onMount } from 'svelte';
 
   interface PadShape {
     x: number;
@@ -24,10 +23,6 @@
   export let activeNotes: Set<string> = new Set();
   export let padLabelType: LabelType = 'digits';
 
-  let containerWidth: number = 800;
-  let containerHeight: number = 600;
-  let containerElement: HTMLDivElement;
-
   // Calculate bounds in physical coordinates
   $: phys_xs = pads.map(p => p.phys_x);
   $: phys_ys = pads.map(p => p.phys_y);
@@ -39,7 +34,7 @@
 
   $: originPad = pads.find(p => p.x === 0 && p.y === 0);
   $: pad_halfheight = (Math.max(...(originPad?.shape.map(v => v[1]) || [0])) - Math.min(...(originPad?.shape.map(v => v[1]) || [0]))) / 2;
-  $: pad_halfwidth = (Math.max(...(originPad?.shape.map(v => v[0]) || [0])) - Math.min(...(originPad?.shape.map(v => v[0]) || [0]))) / 2; 
+  $: pad_halfwidth = (Math.max(...(originPad?.shape.map(v => v[0]) || [0])) - Math.min(...(originPad?.shape.map(v => v[0]) || [0]))) / 2;
   // Add padding around the controller
   $: padding_x = pad_halfwidth + 2.0;
   $: padding_y = pad_halfheight + 2.0;
@@ -48,31 +43,13 @@
   $: viewBox_width = (max_x - min_x) + 2 * padding_x;
   $: viewBox_height = (max_y - min_y) + 2 * padding_y;
   $: viewBox = `${viewBox_min_x} ${viewBox_min_y} ${viewBox_width} ${viewBox_height}`;
-
-  onMount(() => {
-    // Update container size on window resize
-    const updateSize = () => {
-      if (containerElement) {
-        const rect = containerElement.getBoundingClientRect();
-        containerWidth = rect.width;
-        containerHeight = rect.height;
-      }
-    };
-
-    updateSize();
-    window.addEventListener('resize', updateSize);
-
-    return () => {
-      window.removeEventListener('resize', updateSize);
-    };
-  });
 </script>
 
-<div class="canvas-container" bind:this={containerElement}>
+<div class="canvas-container">
 
   <svg
-    width={containerWidth}
-    height={containerHeight}
+    width="100%"
+    height="100%"
     {viewBox}
     preserveAspectRatio="xMidYMid meet"
   >
@@ -101,13 +78,16 @@
   .canvas-container {
     position: relative;
     width: 100%;
-    height: 600px;
+    height: 100%;
+    flex: 1;
+    min-height: 0;
   }
 
   svg {
     border-radius: 4px;
     cursor: pointer;
     background-color: #514e4e;
+    display: block;
   }
 
   .device-label {

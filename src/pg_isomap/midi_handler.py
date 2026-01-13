@@ -231,63 +231,62 @@ class MIDIHandler:
                     continue
 
                 # Fast path: check if this is a note message
-                if len(message) >= 3:
-                    status = message[0] & 0xF0
+                status = message[0] & 0xF0 if message else 0
 
-                    if status == NOTE_ON or status == NOTE_OFF:
-                        # Note message - remap if possible
-                        channel = message[0] & 0x0F
-                        controller_note = message[1]
-                        velocity = message[2]
-                        note_type = "note_on" if status == NOTE_ON else "note_off"
+                if len(message) >= 3 and (status == NOTE_ON or status == NOTE_OFF):
+                    # Note message - remap if possible
+                    channel = message[0] & 0x0F
+                    controller_note = message[1]
+                    velocity = message[2]
+                    note_type = "note_on" if status == NOTE_ON else "note_off"
 
-                        # Look up in reverse mapping
-                        if controller_note in self.reverse_mapping:
-                            logical_coord = self.reverse_mapping[controller_note]
+                    # Look up in reverse mapping
+                    if controller_note in self.reverse_mapping:
+                        logical_coord = self.reverse_mapping[controller_note]
 
-                            # Get scale coordinate if callback is available (before checking if mapped)
-                            scale_coord_str = "?"
-                            if self.get_scale_coord:
+                        # Get scale coordinate if callback is available (before checking if mapped)
+                        scale_coord_str = "?"
+                        if self.get_scale_coord:
+                            try:
+                                scale_coord = self.get_scale_coord(logical_coord[0], logical_coord[1])
+                                if scale_coord:
+                                    scale_coord_str = f"({scale_coord[0]}, {scale_coord[1]})"
+                            except Exception:
+                                pass
+
+                        # Look up mapped note
+                        if logical_coord in self.note_mapping:
+                            mapped_note = self.note_mapping[logical_coord]
+
+                            # Log the full pipeline
+                            # Format: device note_{on/off} {incoming_note} -> (lx, ly) -> (sx, sy) -> note {outgoing_note}
+                            logger.info(
+                                f"device {note_type} {controller_note} -> ({logical_coord[0]}, {logical_coord[1]}) -> {scale_coord_str} -> note {mapped_note}"
+                            )
+
+                            # Notify UI about note event
+                            is_note_on = (status == NOTE_ON and velocity > 0)
+                            if self.on_note_event:
                                 try:
-                                    scale_coord = self.get_scale_coord(logical_coord[0], logical_coord[1])
-                                    if scale_coord:
-                                        scale_coord_str = f"({scale_coord[0]}, {scale_coord[1]})"
-                                except Exception:
-                                    pass
+                                    self.on_note_event(logical_coord[0], logical_coord[1], is_note_on)
+                                except Exception as e:
+                                    logger.error(f"Error in note event callback: {e}")
 
-                            # Look up mapped note
-                            if logical_coord in self.note_mapping:
-                                mapped_note = self.note_mapping[logical_coord]
-
-                                # Log the full pipeline
-                                # Format: device note_{on/off} {incoming_note} -> (lx, ly) -> (sx, sy) -> note {outgoing_note}
-                                logger.info(
-                                    f"device {note_type} {controller_note} -> ({logical_coord[0]}, {logical_coord[1]}) -> {scale_coord_str} -> note {mapped_note}"
-                                )
-
-                                # Notify UI about note event
-                                is_note_on = (status == NOTE_ON and velocity > 0)
-                                if self.on_note_event:
-                                    try:
-                                        self.on_note_event(logical_coord[0], logical_coord[1], is_note_on)
-                                    except Exception as e:
-                                        logger.error(f"Error in note event callback: {e}")
-
-                                # Send remapped note
-                                remapped_message = [message[0], mapped_note, velocity]
-                                self.midi_out.send_message(remapped_message)
-                                self.notes_remapped += 1
-                                self.messages_processed += 1
-                                continue
-                            else:
-                                logger.info(
-                                    f"device {note_type} {controller_note} -> ({logical_coord[0]}, {logical_coord[1]}) -> {scale_coord_str} -> unmapped"
-                                )
+                            # Send remapped note
+                            remapped_message = [message[0], mapped_note, velocity]
+                            self.midi_out.send_message(remapped_message)
+                            self.notes_remapped += 1
+                            self.messages_processed += 1
+                            continue
                         else:
-                            logger.info(f"device {note_type} {controller_note} -> unmapped (no logical coord)")
-
+                            logger.info(
+                                f"device {note_type} {controller_note} -> ({logical_coord[0]}, {logical_coord[1]}) -> {scale_coord_str} -> unmapped"
+                            )
+                    else:
+                        logger.info(f"device {note_type} {controller_note} -> unmapped (no logical coord)")
+                    # Don't pass through unmapped notes
                 else:
-                    # Pass through unchanged (non-note or unmapped)
+                    # Pass through all non-note messages unchanged (CC, pitch bend, etc.)
                     self.midi_out.send_message(message)
                     self.messages_processed += 1
 

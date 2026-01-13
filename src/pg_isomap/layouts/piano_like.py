@@ -58,7 +58,6 @@ class PianoLikeLayout(LayoutCalculator):
 
         # Cache for MOS data
         self._mos: Optional[sx.MOS] = None
-        self._chroma_vec: Optional[sx.Vector2i] = None
         self._coord_to_scale_index: Dict[Tuple[int, int], int] = {}
         self._scale_index_to_mos_coord: Dict[int, Tuple[int, int]] = {}
 
@@ -118,12 +117,6 @@ class PianoLikeLayout(LayoutCalculator):
                    f"strip_width={self.strip_width}, scale_row={self.scale_row_index}, "
                    f"row_offset={self.row_offset}")
 
-    def _build_reverse_lookup(self, coord_to_scale_index: Dict[Tuple[int, int], int]):
-        """Build reverse lookup from scale index to MOS coordinate."""
-        self._coord_to_scale_index = coord_to_scale_index
-        self._scale_index_to_mos_coord = {}
-        for mos_coord, scale_index in coord_to_scale_index.items():
-            self._scale_index_to_mos_coord[scale_index] = mos_coord
 
     def calculate_mapping(
         self,
@@ -157,12 +150,9 @@ class PianoLikeLayout(LayoutCalculator):
 
         # Store MOS data
         self._mos = mos
-        self._chroma_vec = mos.chroma_vec
         self._coord_to_scale_index = coord_to_scale_index
 
         print("lenght of coord_to_scale_index:", len(coord_to_scale_index))
-
-        #self._build_reverse_lookup(coord_to_scale_index)
 
         # Determine controller dimensions
         if logical_coords:

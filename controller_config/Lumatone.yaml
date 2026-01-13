@@ -1,6 +1,6 @@
-DeviceName: Lumatone
-ControllerMIDIOutput: Lumatone MIDI
-ControllerMIDIInput: Lumatone MIDI
+DeviceName: "Lumatone [untested]"
+ControllerMIDIOutput: "Lumatone MIDI"
+ControllerMIDIInput: "Lumatone MIDI"
 isMPE: false
 hasGlobalPitchBend: true
 NumRows: 19

@@ -1,0 +1,20 @@
+DeviceName: "Mossy [concept]"
+ControllerMIDIOutput: "Mossy"
+ControllerMIDIInput: "Mossy"
+isMPE: true
+hasGlobalPitchBend: false
+NumRows: 6
+FirstRowIdx: 0
+RowLengths: [21, 22, 21, 21, 22, 21]
+RowOffsets: [-1, 0, 0, -1, 0]
+HorizonToRowAngle: 0.0
+RowToColAngle: 71.56
+xSpacing: 19.0
+ySpacing: 20.03
+keyIndex: "36 + cumulativeIndex(x, y)"
+noteAssign: "36 + cumulativeIndex(x, y)"
+BEND_RANGE: 1
+SetPadNotesBulk: "0xF0 0x00 0x21 0x7E 0x7F 0x00 0x3A 0xF7"
+SetPadColorsBulk: "0xF0 0x00 0x21 0x7E 0x7F 0x09 0x00 0x01 BEND_RANGE 0x0E 0x00 0x00 0x01 0x01 0x00 0x00 0x00 {#for pad in pads} keyIndex(pad.x, pad.y) pad.red pad.green pad.blue {#end} 0xF7"
+defaultIsoRootCoordinate: [0,5]
+
