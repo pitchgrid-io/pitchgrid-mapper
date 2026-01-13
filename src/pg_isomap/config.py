@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # Web Server
     web_host: str = "127.0.0.1"
-    web_port: int = 8080
+    web_port: int = 0  # 0 = ephemeral port (assigned by OS)
 
     # Paths
     controller_config_dir: Path = Path(__file__).parent.parent.parent / "controller_config"

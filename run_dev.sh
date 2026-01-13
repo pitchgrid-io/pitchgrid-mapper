@@ -65,6 +65,7 @@ trap cleanup SIGINT SIGTERM
 # Start backend in background
 echo "Starting backend..."
 export PGISOMAP_DEBUG=true
+export PGISOMAP_WEB_PORT=8080  # Fixed port for dev mode (vite proxy expects this)
 uv run python -m pg_isomap &
 BACKEND_PID=$!
 
