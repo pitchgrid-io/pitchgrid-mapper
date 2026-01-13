@@ -31,6 +31,12 @@
     ? generatePath(shape, phys_x, phys_y)
     : generateHexagonPath(phys_x, phys_y, 0.5);
 
+  // Calculate pad height from shape vertices for font sizing
+  $: padHeight = shape && shape.length > 0
+    ? Math.max(...shape.map(v => v[1])) - Math.min(...shape.map(v => v[1]))
+    : 1.0;
+  $: fontSize = padHeight * 0.25;
+
   function generatePath(vertices: Array<[number, number]>, centerX: number, centerY: number): string {
     if (vertices.length === 0) return '';
 
@@ -106,8 +112,8 @@
     text-anchor="middle"
     dominant-baseline="middle"
     font-family="monospace"
-    font-size="3"
-    fill={isActive ? '#fff' : '#fff'}
+    font-size={fontSize}
+    fill="#fff"
   >
     {displayLabel}
   </text>

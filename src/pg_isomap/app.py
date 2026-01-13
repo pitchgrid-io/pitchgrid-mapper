@@ -383,12 +383,16 @@ class PGIsomapApp:
         if self.web_api:
             self.web_api.broadcast_status_update()
 
-        # Send color updates to physical controller
-        self._send_pad_colors()
+        # Send color updates to physical controller (async to keep UI responsive)
+        self._send_pad_colors_async()
 
     def _handle_scale_update(self, scale_data: dict):
         """Handle scale/tuning update from PitchGrid plugin."""
         logger.info("Received scale/tuning update from PitchGrid")
+
+        # Cancel any ongoing color send operation immediately
+        # This prevents interleaved MIDI messages when rapid tuning changes arrive
+        self.midi_handler.cancel_color_send()
 
         # Check if this is tuning data from /pitchgrid/plugin/tuning
         args = scale_data.get('args', [])
@@ -624,8 +628,28 @@ class PGIsomapApp:
         except Exception as e:
             logger.error(f"Error sending controller setup: {e}", exc_info=True)
 
-    def _send_pad_colors(self):
-        """Send color updates to physical controller."""
+    def _send_pad_colors_async(self):
+        """Send color updates to physical controller asynchronously.
+
+        This runs the color send in a background thread to keep the UI responsive
+        during rapid layout changes (e.g., transformation controls).
+        The generation-based cancellation ensures that if a new update arrives,
+        the old send operation is cancelled.
+        """
+        # Cancel any ongoing color send and get a new generation number
+        generation = self.midi_handler.cancel_color_send()
+
+        # Start the color send in a background thread
+        thread = threading.Thread(
+            target=self._send_pad_colors_worker,
+            args=(generation,),
+            daemon=True
+        )
+        thread.name = f"ColorSend-{generation}"
+        thread.start()
+
+    def _send_pad_colors_worker(self, generation: int):
+        """Worker method that sends pad colors (runs in background thread)."""
         if not self.current_controller or not self.midi_handler:
             logger.debug("_send_pad_colors: No controller or midi_handler")
             return
@@ -642,7 +666,8 @@ class PGIsomapApp:
 
         logger.info(f"_send_pad_colors: Sending colors for {self.current_controller.device_name}"
                     f" (bulk={bool(self.current_controller.set_pad_colors_bulk)},"
-                    f" individual={bool(self.current_controller.set_pad_color)})")
+                    f" individual={bool(self.current_controller.set_pad_color)},"
+                    f" generation={generation})")
 
         try:
             from .midi_setup import MIDITemplateBuilder
@@ -683,7 +708,7 @@ class PGIsomapApp:
             if self.current_controller.set_pad_colors_bulk:
                 midi_bytes = builder.set_pad_colors_bulk(pads_with_colors)
                 if midi_bytes:
-                    self.midi_handler.send_raw_bytes(midi_bytes)
+                    self.midi_handler.send_raw_bytes(midi_bytes, generation=generation)
                     logger.info(f"Sent SetPadColorsBulk: {len(pads_with_colors)} pads, {len(midi_bytes)} bytes")
 
             # Fallback to individual messages
@@ -695,7 +720,7 @@ class PGIsomapApp:
                         pad['color']
                     )
                     if midi_bytes:
-                        self.midi_handler.send_raw_bytes(midi_bytes)
+                        self.midi_handler.send_raw_bytes(midi_bytes, generation=generation)
                 logger.info(f"Sent SetPadColor for {len(pads_with_colors)} pads individually")
 
         except Exception as e:

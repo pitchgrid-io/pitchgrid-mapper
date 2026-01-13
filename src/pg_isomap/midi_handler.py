@@ -51,6 +51,10 @@ class MIDIHandler:
         self.messages_processed = 0
         self.notes_remapped = 0
 
+        # Color send cancellation
+        self._color_send_generation = 0
+        self._color_send_lock = threading.Lock()
+
     def initialize_virtual_port(self) -> bool:
         """Create virtual MIDI output port."""
         try:
@@ -360,7 +364,18 @@ class MIDIHandler:
         except Exception as e:
             logger.error(f"Error sending note-off: {e}")
 
-    def send_raw_bytes(self, data: List[int], delay_ms: float = 1.5):
+    def cancel_color_send(self) -> int:
+        """
+        Cancel any ongoing color send operation.
+
+        Returns:
+            The new generation number to use for the next send operation.
+        """
+        with self._color_send_lock:
+            self._color_send_generation += 1
+            return self._color_send_generation
+
+    def send_raw_bytes(self, data: List[int], delay_ms: float = 1.5, generation: Optional[int] = None):
         """
         Send arbitrary MIDI message bytes TO THE CONTROLLER.
 
@@ -374,6 +389,8 @@ class MIDIHandler:
         Args:
             data: List of MIDI bytes to send
             delay_ms: Delay in milliseconds between consecutive messages (default 1.5ms)
+            generation: If provided, the send will be cancelled if the generation number
+                        has changed (indicating a newer send operation has started)
         """
         if not self.controller_out:
             logger.warning("Cannot send MIDI to controller: no output port connected")
@@ -388,6 +405,13 @@ class MIDIHandler:
 
             # Send each message with delay between them
             for i, msg in enumerate(messages):
+                # Check for cancellation if generation is provided
+                if generation is not None:
+                    with self._color_send_lock:
+                        if self._color_send_generation != generation:
+                            logger.debug(f"Color send cancelled (generation {generation} != {self._color_send_generation})")
+                            return
+
                 self.controller_out.send_message(msg)
                 # Add delay between messages (but not after the last one)
                 if i < len(messages) - 1:
