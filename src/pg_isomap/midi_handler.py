@@ -17,6 +17,30 @@ from rtmidi.midiconstants import NOTE_OFF, NOTE_ON
 logger = logging.getLogger(__name__)
 
 
+def find_best_matching_port(search_string: str, available_ports: List[str]) -> Optional[str]:
+    """
+    Find the best matching port name using substring matching.
+
+    Returns the shortest port name that contains the search_string as a substring.
+    This handles platform differences where port names vary (e.g., macOS adds prefixes,
+    Windows adds MIDIIN/MIDIOUT prefixes).
+
+    Args:
+        search_string: The substring to search for in port names
+        available_ports: List of available port names
+
+    Returns:
+        The shortest matching port name, or None if no match found
+    """
+    matching_ports = [port for port in available_ports if search_string in port]
+
+    if not matching_ports:
+        return None
+
+    # Return the shortest matching port name
+    return min(matching_ports, key=len)
+
+
 class MIDIHandler:
     """Handles MIDI input/output with real-time note remapping."""
 
@@ -137,38 +161,38 @@ class MIDIHandler:
             if output_port_name:
                 self.midi_in = rtmidi.MidiIn()
                 in_ports = self.midi_in.get_ports()
-                in_port_index = None
-                for i, p in enumerate(in_ports):
-                    if output_port_name in p:
-                        in_port_index = i
-                        break
 
-                if in_port_index is None:
-                    logger.error(f"Controller output port '{output_port_name}' not found in available ports")
+                # Find best matching port using substring matching
+                matched_port_name = find_best_matching_port(output_port_name, in_ports)
+
+                if matched_port_name is None:
+                    logger.error(f"Controller output port matching '{output_port_name}' not found")
                     logger.debug(f"Available input ports: {in_ports}")
                     return False
+
+                # Find the index of the matched port
+                in_port_index = in_ports.index(matched_port_name)
 
                 self.midi_in.open_port(in_port_index)
                 self.midi_in.set_callback(self._midi_callback)
                 self.controller_port = self.midi_in
-                self.connected_port_name = output_port_name
-                logger.info(f"Listening to controller on: {output_port_name}")
+                self.connected_port_name = matched_port_name
+                logger.info(f"Listening to controller on: {matched_port_name} (matched '{output_port_name}')")
 
             # Open MIDI output to controller (controller's input port) for setup messages
             if input_port_name:
                 self.controller_out = rtmidi.MidiOut()
                 out_ports = self.controller_out.get_ports()
-                out_port_index = None
-                for i, p in enumerate(out_ports):
-                    if input_port_name in p:
-                        out_port_index = i
-                        break
 
-                if out_port_index is not None:
+                # Find best matching port using substring matching
+                matched_out_port_name = find_best_matching_port(input_port_name, out_ports)
+
+                if matched_out_port_name is not None:
+                    out_port_index = out_ports.index(matched_out_port_name)
                     self.controller_out.open_port(out_port_index)
-                    logger.info(f"Sending setup messages to controller on: {input_port_name}")
+                    logger.info(f"Sending setup messages to controller on: {matched_out_port_name} (matched '{input_port_name}')")
                 else:
-                    logger.warning(f"Controller input port '{input_port_name}' not found, setup messages will not work")
+                    logger.warning(f"Controller input port matching '{input_port_name}' not found, setup messages will not work")
                     logger.debug(f"Available output ports: {out_ports}")
                     self.controller_out = None
 
