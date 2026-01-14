@@ -58,53 +58,54 @@ class MIDIHandler:
 
     def initialize_virtual_port(self) -> bool:
         """
-        Create or connect to virtual MIDI output port.
+        Create or connect to virtual MIDI output port named 'PitchGrid ICM'.
 
-        On macOS/Linux: Creates a new virtual port
-        On Windows: Looks for existing virtual MIDI driver ports (loopMIDI, etc.)
+        On macOS/Linux:
+        - First checks if port already exists, connects to it
+        - If not, creates a new virtual port
+
+        On Windows:
+        - Looks for existing port with exact name
+        - If not found, returns False and shows user message
         """
         try:
             self.midi_out = rtmidi.MidiOut()
+            available_ports = self.midi_out.get_ports()
 
-            # Try to create virtual port (works on macOS/Linux)
+            # First, try to find existing port with our exact name
+            for port_idx, port_name in enumerate(available_ports):
+                if self.virtual_device_name in port_name:
+                    try:
+                        self.midi_out.open_port(port_idx)
+                        self.virtual_port_name = port_name
+                        logger.info(f"Connected to existing virtual MIDI port: {port_name}")
+                        return True
+                    except Exception as open_err:
+                        logger.warning(f"Failed to open port '{port_name}': {open_err}")
+
+            # Port doesn't exist, try to create it (works on macOS/Linux only)
             try:
                 self.midi_out.open_virtual_port(self.virtual_device_name)
                 self.virtual_port_name = self.virtual_device_name
-                logger.info(f"Virtual MIDI port '{self.virtual_device_name}' created")
+                logger.info(f"Created virtual MIDI port '{self.virtual_device_name}'")
                 return True
             except Exception as e:
-                # Virtual port creation failed - probably Windows
+                # Virtual port creation failed - this is expected on Windows
                 logger.debug(f"Could not create virtual port: {e}")
 
-                # On Windows, look for existing virtual MIDI ports
-                available_ports = self.midi_out.get_ports()
-                logger.info(f"Available MIDI output ports: {available_ports}")
-
-                # Look for common virtual MIDI drivers
-                virtual_keywords = ['loopMIDI', 'loop', 'virtual', 'IAC', self.virtual_device_name]
-
-                for port_idx, port_name in enumerate(available_ports):
-                    # Check if port name contains any virtual keywords (case-insensitive)
-                    if any(keyword.lower() in port_name.lower() for keyword in virtual_keywords):
-                        try:
-                            self.midi_out.open_port(port_idx)
-                            self.virtual_port_name = port_name
-                            logger.info(f"Connected to existing virtual MIDI port: {port_name}")
-                            return True
-                        except Exception as open_err:
-                            logger.warning(f"Failed to open port '{port_name}': {open_err}")
-                            continue
-
-                # No virtual port found
+                # On Windows, we need the user to create the port manually
                 self.virtual_port_name = None
-                logger.error("No virtual MIDI port found")
-                logger.info("On Windows, please install a virtual MIDI driver:")
-                logger.info("  - loopMIDI (recommended): https://www.tobias-erichsen.de/software/loopmidi.html")
-                logger.info("  - Or configure your DAW's virtual MIDI ports")
+                logger.error(f"Virtual MIDI port '{self.virtual_device_name}' not found")
+                logger.error("Please create a virtual MIDI port using loopMIDI:")
+                logger.error(f"  1. Download loopMIDI: https://www.tobias-erichsen.de/software/loopmidi.html")
+                logger.error(f"  2. Install and run loopMIDI")
+                logger.error(f"  3. Create a new port with the exact name: {self.virtual_device_name}")
+                logger.error(f"  4. Restart this application")
                 return False
 
         except Exception as e:
             logger.error(f"Failed to initialize MIDI output: {e}")
+            self.virtual_port_name = None
             return False
 
     def connect_to_controller(

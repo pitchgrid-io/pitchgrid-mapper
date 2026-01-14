@@ -27,6 +27,7 @@ class DesktopApp:
         self.server_thread: threading.Thread | None = None
         self.window: webview.Window | None = None
         self.actual_port: int | None = None
+        self.show_virtual_midi_warning: bool = False
 
     def start_backend(self):
         """Start the backend server in a separate thread."""
@@ -36,7 +37,16 @@ class DesktopApp:
         self.pg_app = PGIsomapApp()
 
         # Start application
-        if not self.pg_app.start():
+        started = self.pg_app.start()
+
+        # Check if virtual MIDI port is missing (but app still started)
+        if started and not self.pg_app.midi_handler.virtual_port_name:
+            # Store flag to show dialog after window is created
+            self.show_virtual_midi_warning = True
+        else:
+            self.show_virtual_midi_warning = False
+
+        if not started:
             logger.error("Failed to start application")
             sys.exit(1)
 
@@ -82,7 +92,7 @@ class DesktopApp:
 
         # Create window
         self.window = webview.create_window(
-            title=f"{settings.app_name} v{settings.version}",
+            title=f"{settings.app_full_name} v{settings.version}",
             url=url,
             width=1280,
             height=800,
@@ -92,6 +102,35 @@ class DesktopApp:
 
         logger.info("Application window created")
 
+    def on_window_loaded(self):
+        """Callback when window is fully loaded and ready."""
+        if self.show_virtual_midi_warning:
+            import platform
+            system = platform.system()
+
+            if system == "Windows":
+                message = (
+                    f"Virtual MIDI port '{settings.virtual_midi_device_name}' not found.\n\n"
+                    f"To send remapped MIDI to your DAW, you need to:\n\n"
+                    f"1. Download and install loopMIDI from:\n"
+                    f"   https://www.tobias-erichsen.de/software/loopmidi.html\n\n"
+                    f"2. Run loopMIDI and create a new port named:\n"
+                    f"   {settings.virtual_midi_device_name}\n\n"
+                    f"3. Restart this application\n\n"
+                    f"The app will continue to run, but cannot output MIDI until the port is available."
+                )
+            else:
+                message = (
+                    f"Virtual MIDI port '{settings.virtual_midi_device_name}' could not be created.\n\n"
+                    f"The app will continue to run, but cannot output MIDI until the port is available.\n\n"
+                    f"Please check your system's MIDI configuration."
+                )
+
+            self.window.create_confirmation_dialog(
+                title="Virtual MIDI Port Not Available",
+                message=message,
+            )
+
     def run(self):
         """Run the desktop application."""
         try:
@@ -100,6 +139,10 @@ class DesktopApp:
 
             # Create and show window
             self.create_window()
+
+            # Set the loaded callback to show dialog when window is ready
+            if self.show_virtual_midi_warning:
+                self.window.events.loaded += self.on_window_loaded
 
             # Start webview (blocking call)
             logger.info("Starting webview...")
