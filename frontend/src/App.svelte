@@ -409,18 +409,6 @@
           <option value="mos_coords">MOS Coordinates</option>
           <option value="device_coords">Device Coordinates</option>
         </select>
-
-        <div class="connection-indicators">
-          {#if status.midi_connected}
-            <span class="connected-indicator midi-connected">● MIDI Connected</span>
-          {/if}
-          <span class="connected-indicator osc-indicator" class:osc-connected={status.osc_connected}>
-            ● OSC {status.osc_connected ? 'Connected' : 'Disconnected'}
-          </span>
-          {#if status.connected_controller === 'Computer Keyboard' && !hasUserActivation}
-            <span class="activation-hint">Click anywhere to enable keyboard</span>
-          {/if}
-        </div>
       </div>
 
       <!-- Transformation Toolbar (for isomorphic layout) -->
@@ -580,6 +568,25 @@
       {:else}
         <p>No controller loaded</p>
       {/if}
+
+      <!-- Status badges row below canvas -->
+      <div class="status-badges">
+        {#if status.midi_connected}
+          <span class="badge midi-connected">● Controller: {status.connected_controller}</span>
+        {/if}
+
+        <span class="badge virtual-midi-indicator" class:virtual-midi-connected={status.virtual_midi_device !== 'None'}>
+          ● Virtual MIDI: {status.virtual_midi_device}
+        </span>
+
+        <span class="badge osc-indicator" class:osc-connected={status.osc_connected}>
+          ● OSC: {status.osc_connected ? `Connected (${status.osc_port})` : 'Disconnected'}
+        </span>
+
+        {#if status.connected_controller === 'Computer Keyboard' && !hasUserActivation}
+          <span class="badge activation-hint">⚠ Click anywhere to enable keyboard</span>
+        {/if}
+      </div>
     </div>
   {:else}
     <p>Loading...</p>
@@ -637,39 +644,57 @@
     min-width: 200px;
   }
 
-  .connection-indicators {
+  .status-badges {
     display: flex;
     gap: 1em;
     align-items: center;
+    padding: 1em;
+    background-color: rgba(0, 0, 0, 0.3);
+    border-top: 1px solid #333;
+    flex-wrap: wrap;
   }
 
-  .connected-indicator {
+  .badge {
     font-size: 0.85em;
-    padding: 0.25em 0.5em;
+    padding: 0.4em 0.75em;
     border-radius: 4px;
+    white-space: nowrap;
   }
 
   .midi-connected {
     color: #54cec2;
-    background-color: rgba(84, 206, 194, 0.1);
+    background-color: rgba(84, 206, 194, 0.15);
+    border: 1px solid rgba(84, 206, 194, 0.3);
+  }
+
+  .virtual-midi-indicator {
+    color: #888;
+    background-color: rgba(136, 136, 136, 0.1);
+    border: 1px solid rgba(136, 136, 136, 0.3);
+  }
+
+  .virtual-midi-indicator.virtual-midi-connected {
+    color: #9b7eff;
+    background-color: rgba(155, 126, 255, 0.15);
+    border: 1px solid rgba(155, 126, 255, 0.3);
   }
 
   .osc-indicator {
     color: #888;
     background-color: rgba(136, 136, 136, 0.1);
+    border: 1px solid rgba(136, 136, 136, 0.3);
   }
 
   .osc-indicator.osc-connected {
     color: #54cec2;
-    background-color: rgba(84, 206, 194, 0.1);
+    background-color: rgba(84, 206, 194, 0.15);
+    border: 1px solid rgba(84, 206, 194, 0.3);
   }
 
   .activation-hint {
-    font-size: 0.85em;
-    padding: 0.25em 0.5em;
-    border-radius: 4px;
     color: #ffa500;
     background-color: rgba(255, 165, 0, 0.15);
+    border: 1px solid rgba(255, 165, 0, 0.3);
     animation: pulse 1.5s ease-in-out infinite;
   }
 

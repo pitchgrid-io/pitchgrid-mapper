@@ -28,7 +28,8 @@ class MIDIHandler:
         self.midi_out: Optional[rtmidi.MidiOut] = None
         self.controller_port: Optional[rtmidi.MidiIn] = None
         self.controller_out: Optional[rtmidi.MidiOut] = None  # Output TO controller for setup messages
-        self.connected_port_name: Optional[str] = None  # Name of currently connected port
+        self.connected_port_name: Optional[str] = None  # Name of currently connected controller port
+        self.virtual_port_name: Optional[str] = None  # Name of connected virtual MIDI output port
 
         # Note mapping table (logical_x, logical_y) -> midi_note
         self.note_mapping: Dict[Tuple[int, int], int] = {}
@@ -68,6 +69,7 @@ class MIDIHandler:
             # Try to create virtual port (works on macOS/Linux)
             try:
                 self.midi_out.open_virtual_port(self.virtual_device_name)
+                self.virtual_port_name = self.virtual_device_name
                 logger.info(f"Virtual MIDI port '{self.virtual_device_name}' created")
                 return True
             except Exception as e:
@@ -86,6 +88,7 @@ class MIDIHandler:
                     if any(keyword.lower() in port_name.lower() for keyword in virtual_keywords):
                         try:
                             self.midi_out.open_port(port_idx)
+                            self.virtual_port_name = port_name
                             logger.info(f"Connected to existing virtual MIDI port: {port_name}")
                             return True
                         except Exception as open_err:
@@ -93,6 +96,7 @@ class MIDIHandler:
                             continue
 
                 # No virtual port found
+                self.virtual_port_name = None
                 logger.error("No virtual MIDI port found")
                 logger.info("On Windows, please install a virtual MIDI driver:")
                 logger.info("  - loopMIDI (recommended): https://www.tobias-erichsen.de/software/loopmidi.html")

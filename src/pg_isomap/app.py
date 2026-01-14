@@ -579,7 +579,7 @@ class PGIsomapApp:
             'connected_controller': self.current_controller.device_name if self.current_controller else None,
             'midi_connected': self.midi_handler.is_controller_connected(),
             'layout_type': self.current_layout_config.layout_type.value,
-            'virtual_midi_device': settings.virtual_midi_device_name,
+            'virtual_midi_device': self.midi_handler.virtual_port_name or 'None',
             'available_controllers': self.controller_manager.get_all_device_names(),
             'detected_controllers': detected_controllers,
             'controller_pads': controller_pads,
