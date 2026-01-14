@@ -72,5 +72,11 @@ config/local.yaml
 # Prototype/reference files
 _prototype_reference_main.py
 
-# Build artifacts
+# Build artifacts - macOS
 *.dmg
+*.icns
+
+# Build artifacts - Windows
+*.ico
+*.exe
+Installers/Windows/Output/
