@@ -77,8 +77,8 @@ class PGIsomapApp:
 
         # Initialize virtual MIDI port
         if not self.midi_handler.initialize_virtual_port():
-            logger.error("Failed to create virtual MIDI port")
-            return False
+            logger.warning("Virtual MIDI port not available")
+            logger.warning("The app can run but cannot send remapped MIDI to your DAW without a virtual port")
 
         # Start MIDI processing
         self.midi_handler.start()
