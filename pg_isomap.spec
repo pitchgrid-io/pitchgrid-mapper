@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import sys
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -15,10 +16,31 @@ app_version = os.getenv('APP_VERSION', '0.1.0')
 frontend_dist = 'frontend/dist'
 controller_config = 'controller_config'
 
+# Find scalatrix binary
+scalatrix_binaries = []
+try:
+    import scalatrix
+    scalatrix_path = scalatrix.__file__
+    scalatrix_binaries = [(scalatrix_path, '.')]
+    print(f"Found scalatrix at: {scalatrix_path}")
+except ImportError:
+    # If we can't import, try to find it manually
+    site_packages = os.path.join(sys.prefix, 'lib', 'python3.12', 'site-packages')
+    scalatrix_so = os.path.join(site_packages, 'scalatrix.so')
+    scalatrix_dylib = os.path.join(site_packages, 'scalatrix.dylib')
+    if os.path.exists(scalatrix_so):
+        scalatrix_binaries = [(scalatrix_so, '.')]
+        print(f"Found scalatrix.so at: {scalatrix_so}")
+    elif os.path.exists(scalatrix_dylib):
+        scalatrix_binaries = [(scalatrix_dylib, '.')]
+        print(f"Found scalatrix.dylib at: {scalatrix_dylib}")
+    else:
+        print("WARNING: Could not find scalatrix binary!")
+
 a = Analysis(
     ['launcher.py'],
     pathex=['src'],
-    binaries=[],
+    binaries=scalatrix_binaries,
     datas=[
         (frontend_dist, 'frontend/dist'),
         (controller_config, 'controller_config'),

@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec file for Windows build
 import os
+import sys
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -14,10 +15,31 @@ app_version = os.getenv('APP_VERSION', '0.1.0')
 frontend_dist = 'frontend/dist'
 controller_config = 'controller_config'
 
+# Find scalatrix binary
+scalatrix_binaries = []
+scalatrix_so_path = None
+try:
+    import scalatrix
+    scalatrix_so_path = scalatrix.__file__
+    print(f"Found scalatrix at: {scalatrix_so_path}")
+except ImportError:
+    # If we can't import, try to find it manually
+    site_packages = os.path.join(sys.prefix, 'Lib', 'site-packages')
+    scalatrix_so = os.path.join(site_packages, 'scalatrix.so')
+    if os.path.exists(scalatrix_so):
+        scalatrix_so_path = scalatrix_so
+        print(f"Found scalatrix.so at: {scalatrix_so}")
+    else:
+        print("WARNING: Could not find scalatrix binary!")
+
+# Add as binary (will be renamed after Analysis)
+if scalatrix_so_path:
+    scalatrix_binaries = [(scalatrix_so_path, '.')]
+
 a = Analysis(
     ['launcher.py'],
     pathex=['src'],
-    binaries=[],
+    binaries=scalatrix_binaries,
     datas=[
         (frontend_dist, 'frontend/dist'),
         (controller_config, 'controller_config'),
@@ -76,6 +98,17 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# Rename scalatrix.so to scalatrix.pyd in the binaries list for Windows compatibility
+new_binaries = []
+for binary_tuple in a.binaries:
+    name, src, typecode = binary_tuple
+    if name == 'scalatrix.so':
+        new_binaries.append(('scalatrix.pyd', src, typecode))
+        print(f"Renamed {name} -> scalatrix.pyd in binaries")
+    else:
+        new_binaries.append(binary_tuple)
+a.binaries = new_binaries
 
 pyz = PYZ(a.pure)
 
