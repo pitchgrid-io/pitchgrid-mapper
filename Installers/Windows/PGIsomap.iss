@@ -87,6 +87,8 @@ begin
 end;
 
 function InitializeSetup: Boolean;
+var
+  ErrorCode: Integer;
 begin
   Result := True;
   if not IsWebView2Installed then
@@ -94,7 +96,7 @@ begin
     if MsgBox('PG Isomap requires Microsoft Edge WebView2 Runtime.'#13#10#13#10 +
               'Would you like to download it now?', mbConfirmation, MB_YESNO) = IDYES then
     begin
-      ShellExec('open', 'https://go.microsoft.com/fwlink/p/?LinkId=2124703', '', '', SW_SHOW, ewNoWait, Result);
+      ShellExec('open', 'https://go.microsoft.com/fwlink/p/?LinkId=2124703', '', '', SW_SHOW, ewNoWait, ErrorCode);
     end;
     // Allow installation to continue - user may install WebView2 later
   end;

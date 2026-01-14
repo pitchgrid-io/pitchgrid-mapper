@@ -29,13 +29,46 @@ if (-not (Test-Path "dist\$AppName\$AppName.exe")) {
 }
 
 # Find Inno Setup
-$InnoSetupPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-if (-not (Test-Path $InnoSetupPath)) {
-    # Try alternate location
-    $InnoSetupPath = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+$InnoSetupPaths = @(
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+    "C:\Program Files\Inno Setup 6\ISCC.exe"
+)
+
+# Try to find ISCC.exe by searching common directories
+$InnoSetupPath = $null
+foreach ($path in $InnoSetupPaths) {
+    if (Test-Path $path) {
+        $InnoSetupPath = $path
+        break
+    }
 }
-if (-not (Test-Path $InnoSetupPath)) {
-    Write-Host "Error: Inno Setup 6 not found" -ForegroundColor Red
+
+# If not found in hardcoded paths, search for it
+if (-not $InnoSetupPath) {
+    Write-Host "Searching for Inno Setup installation..." -ForegroundColor Yellow
+
+    $searchDirs = @(
+        "${env:ProgramFiles(x86)}",
+        "$env:LOCALAPPDATA\Programs",
+        "${env:ProgramFiles}"
+    )
+
+    foreach ($dir in $searchDirs) {
+        if (Test-Path $dir) {
+            $found = Get-ChildItem -Path $dir -Filter "ISCC.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) {
+                $InnoSetupPath = $found.FullName
+                Write-Host "  Found at: $InnoSetupPath" -ForegroundColor Green
+                break
+            }
+        }
+    }
+}
+
+if (-not $InnoSetupPath) {
+    Write-Host "Error: Inno Setup not found" -ForegroundColor Red
     Write-Host "Install from: https://jrsoftware.org/isdl.php" -ForegroundColor Yellow
     Write-Host "Or use: winget install JRSoftware.InnoSetup" -ForegroundColor Yellow
     exit 1
