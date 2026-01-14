@@ -51,14 +51,15 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 }
 Write-Host "  Found: npm"
 
-# Generate Windows icon from SVG (requires Inkscape or ImageMagick)
+# Generate Windows icon from PNG (requires ImageMagick)
 Write-Host ""
 Write-Host "Generating Windows icon..." -ForegroundColor Yellow
 
-if (Test-Path "icons/icon_256.png") {
+if (Test-Path "icons/icon_256x256.png") {
     # Use ImageMagick if available
-    if (Get-Command magick -ErrorAction SilentlyContinue) {
-        magick convert "icons/icon_256.png" -define icon:auto-resize=256,128,64,48,32,16 "$AppName.ico"
+    $magickPath = "C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
+    if (Test-Path $magickPath) {
+        & $magickPath convert "icons/icon_256x256.png" -define icon:auto-resize=256,128,64,48,32,16 "$AppName.ico"
         Write-Host "  Created $AppName.ico using ImageMagick"
     }
     elseif (Test-Path "$AppName.ico") {
@@ -70,7 +71,7 @@ if (Test-Path "icons/icon_256.png") {
     }
 }
 else {
-    Write-Host "  Warning: icons/icon_256.png not found" -ForegroundColor Yellow
+    Write-Host "  Warning: icons/icon_256x256.png not found" -ForegroundColor Yellow
 }
 
 # Build frontend
