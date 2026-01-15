@@ -331,25 +331,28 @@ class PGIsomapApp:
 
         if needs_new_calculator:
             if self.current_layout_config.layout_type == LayoutType.ISOMORPHIC:
-                # Pass default root coordinate from controller config
+                # Pass default root coordinate and row_to_col_angle from controller config
                 default_root = self.current_controller.default_iso_root_coordinate
                 self.current_layout_calculator = IsomorphicLayout(
                     self.current_layout_config,
-                    default_root=default_root
+                    default_root=default_root,
+                    row_to_col_angle=self.current_controller.row_to_col_angle
                 )
             elif self.current_layout_config.layout_type == LayoutType.STRING_LIKE:
-                # Pass default root coordinate from controller config
+                # Pass default root coordinate and row_to_col_angle from controller config
                 default_root = self.current_controller.default_iso_root_coordinate
                 self.current_layout_calculator = StringLikeLayout(
                     self.current_layout_config,
-                    default_root=default_root
+                    default_root=default_root,
+                    row_to_col_angle=self.current_controller.row_to_col_angle
                 )
             elif self.current_layout_config.layout_type == LayoutType.PIANO_LIKE:
-                # Pass default root coordinate from controller config
+                # Pass default root coordinate and row_to_col_angle from controller config
                 default_root = self.current_controller.default_iso_root_coordinate
                 self.current_layout_calculator = PianoLikeLayout(
                     self.current_layout_config,
-                    default_root=default_root
+                    default_root=default_root,
+                    row_to_col_angle=self.current_controller.row_to_col_angle
                 )
             else:
                 logger.error(f"Unsupported layout type: {self.current_layout_config.layout_type}")
@@ -576,6 +579,15 @@ class PGIsomapApp:
                 })
 
         import sys
+
+        # Add controller geometry info if available
+        controller_geometry = None
+        if self.current_controller:
+            controller_geometry = {
+                'horizon_to_row_angle': self.current_controller.horizon_to_row_angle,
+                'row_to_col_angle': self.current_controller.row_to_col_angle,
+            }
+
         return {
             'connected_controller': self.current_controller.device_name if self.current_controller else None,
             'midi_connected': self.midi_handler.is_controller_connected(),
@@ -584,6 +596,7 @@ class PGIsomapApp:
             'available_controllers': self.controller_manager.get_all_device_names(),
             'detected_controllers': detected_controllers,
             'controller_pads': controller_pads,
+            'controller_geometry': controller_geometry,
             'osc_connected': self.osc_handler.is_connected(),
             'osc_port': self.osc_handler.port,
             'tuning': self.tuning_handler.get_tuning_info(),

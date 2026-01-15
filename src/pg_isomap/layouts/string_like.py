@@ -24,13 +24,15 @@ class StringLikeLayout(LayoutCalculator):
     the MOS coordinate, which determines the MIDI note.
     """
 
-    def __init__(self, config: LayoutConfig, default_root: Optional[Tuple[int, int]] = None):
+    def __init__(self, config: LayoutConfig, default_root: Optional[Tuple[int, int]] = None,
+                 row_to_col_angle: float = 90.0):
         """
         Initialize string-like layout.
 
         Args:
             config: Layout configuration
             default_root: Default root coordinate from controller config
+            row_to_col_angle: Angle between row and column axes (from controller config)
         """
         super().__init__(config)
 
@@ -42,6 +44,13 @@ class StringLikeLayout(LayoutCalculator):
 
         # Horizontal flip: if True, notes decrease along x instead of increase
         self.flip_horizontal = False
+
+        # Vertical flip: if True, row_offset is negated
+        self.flip_vertical = False
+
+        # Determine if controller is quad-like or hex-like
+        self.quad_or_hex = 'rect' if 75 < row_to_col_angle < 105 else 'hex'
+        logger.info(f"String-like layout mode: {self.quad_or_hex} (RowToColAngle={row_to_col_angle}°)")
 
         # Cache for reverse lookup: scale_index -> mos_coord
         self._index_to_mos_coord: Dict[int, Tuple[int, int]] = {}
@@ -72,17 +81,16 @@ class StringLikeLayout(LayoutCalculator):
         elif transform_type == 'skew_right':
             self.row_offset += 1
         elif transform_type == 'reflect_vertical':
-            # Reflect vertically: negate row_offset
-            self.row_offset = -self.row_offset
+            # Reflect vertically: flip vertical direction
+            self.flip_vertical = not self.flip_vertical
         elif transform_type == 'reflect_horizontal':
-            # Reflect horizontally: flip note ordering AND negate row_offset
+            # Reflect horizontally: flip horizontal direction
             self.flip_horizontal = not self.flip_horizontal
-            self.row_offset = -self.row_offset
         else:
             logger.warning(f"Unknown transformation type for string-like layout: {transform_type}")
 
         logger.info(f"String-like transform {transform_type}: root=({self.root_x}, {self.root_y}), "
-                   f"row_offset={self.row_offset}, flip_h={self.flip_horizontal}")
+                   f"row_offset={self.row_offset}, flip_h={self.flip_horizontal}, flip_v={self.flip_vertical}")
 
     def _build_reverse_lookup(self, coord_to_scale_index: Dict[Tuple[int, int], int]):
         """Build reverse lookup from scale index to MOS coordinate."""
@@ -96,12 +104,15 @@ class StringLikeLayout(LayoutCalculator):
 
         Formula: scale_index = ((y - y_root) * row_offset) + (x - x_root) + 60
         If flip_horizontal, the x contribution is negated.
+        If flip_vertical, the y contribution is negated.
         """
         x_delta = logical_x - self.root_x
         if self.flip_horizontal:
             x_delta = -x_delta
 
         y_delta = logical_y - self.root_y
+        if self.flip_vertical:
+            y_delta = -y_delta
 
         return (y_delta * self.row_offset) + x_delta + 60
 

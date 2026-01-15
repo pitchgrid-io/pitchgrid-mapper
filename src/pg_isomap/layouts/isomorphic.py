@@ -3,7 +3,7 @@
 import logging
 from typing import Dict, List, Optional, Tuple
 
-import scalatrix
+import scalatrix as sx
 
 from .base import LayoutCalculator, LayoutConfig
 
@@ -21,32 +21,40 @@ class IsomorphicLayout(LayoutCalculator):
     - The pattern repeats uniformly across the surface
     """
 
-    def __init__(self, config: LayoutConfig, default_root: Optional[Tuple[int, int]] = None):
+    def __init__(self, config: LayoutConfig, default_root: Optional[Tuple[int, int]] = None,
+                 row_to_col_angle: float = 90.0):
         """
         Initialize isomorphic layout with an integer affine transform.
 
         Args:
             config: Layout configuration
             default_root: Default root coordinate from controller config (tx, ty for offset)
+            row_to_col_angle: Angle between row and column axes (from controller config)
         """
         super().__init__(config)
+
+        # Determine if controller is quad-like or hex-like based on RowToColAngle
+        # Quad-like: 75° < angle < 105° (approximately rectangular grid)
+        # Hex-like: otherwise (hexagonal or rhombic grid)
+        self.quad_or_hex = 'rect' if 75 < row_to_col_angle < 105 else 'hex'
+        logger.info(f"Isomorphic layout mode: {self.quad_or_hex} (RowToColAngle={row_to_col_angle}°)")
 
         # Initialize mapping transform
         # Matrix: ((1, 0), (0, 1)) = identity
         # Offset: default_root or (0, 0)
         root_x, root_y = default_root if default_root else (0, 0)
 
-        self.mapping_transform = scalatrix.IntegerAffineTransform(
+        self.mapping_transform = sx.IntegerAffineTransform(
             1, 0,   # First row: a, b
             0, 1,   # Second row: c, d
             root_x, root_y  # Offset: tx, ty
         )
 
-    def set_transform(self, transform: scalatrix.IntegerAffineTransform):
+    def set_transform(self, transform: sx.IntegerAffineTransform):
         """Set the mapping transform directly."""
         self.mapping_transform = transform
 
-    def apply_transformation(self, transform_type: str) -> scalatrix.IntegerAffineTransform:
+    def apply_transformation(self, transform_type: str) -> sx.IntegerAffineTransform:
         """
         Apply a transformation to the mapping transform.
 
@@ -59,40 +67,79 @@ class IsomorphicLayout(LayoutCalculator):
             The new mapping transform after applying the transformation
         """
         # Create transformation matrices/offsets
-        if transform_type == 'shift_left':
-            delta = scalatrix.IntegerAffineTransform(1, 0, 0, 1, -1, 0)
-        elif transform_type == 'shift_right':
-            delta = scalatrix.IntegerAffineTransform(1, 0, 0, 1, 1, 0)
-        elif transform_type == 'shift_up':
-            delta = scalatrix.IntegerAffineTransform(1, 0, 0, 1, 0, 1)
-        elif transform_type == 'shift_down':
-            delta = scalatrix.IntegerAffineTransform(1, 0, 0, 1, 0, -1)
-        elif transform_type == 'skew_left':
-            # Shear matrix: [[1, -1], [0, 1]]
-            delta = scalatrix.IntegerAffineTransform(1, -1, 0, 1, 0, 0)
-        elif transform_type == 'skew_right':
-            # Shear matrix: [[1, 1], [0, 1]]
-            delta = scalatrix.IntegerAffineTransform(1, 1, 0, 1, 0, 0)
-        elif transform_type == 'rotate_left':
-            # 90° counter-clockwise: [[0, -1], [1, 0]]
-            delta = scalatrix.IntegerAffineTransform(0, -1, 1, 0, 0, 0)
-        elif transform_type == 'rotate_right':
-            # 90° clockwise: [[0, 1], [-1, 0]]
-            delta = scalatrix.IntegerAffineTransform(0, 1, -1, 0, 0, 0)
-        elif transform_type == 'reflect_horizontal':
-            # Mirror on Y-axis: [[-1, 0], [0, 1]]
-            delta = scalatrix.IntegerAffineTransform(-1, 0, 0, 1, 0, 0)
-        elif transform_type == 'reflect_vertical':
-            # Mirror on X-axis: [[1, 0], [0, -1]]
-            delta = scalatrix.IntegerAffineTransform(1, 0, 0, -1, 0, 0)
-        else:
-            logger.warning(f"Unknown transformation type: {transform_type}")
-            return self.mapping_transform
+        if self.quad_or_hex == 'rect':
+            if transform_type == 'shift_left':
+                delta = sx.IntegerAffineTransform(1, 0, 0, 1, -1, 0)
+            elif transform_type == 'shift_right':
+                delta = sx.IntegerAffineTransform(1, 0, 0, 1, 1, 0)
+            elif transform_type == 'shift_up':
+                delta = sx.IntegerAffineTransform(1, 0, 0, 1, 0, 1)
+            elif transform_type == 'shift_down':
+                delta = sx.IntegerAffineTransform(1, 0, 0, 1, 0, -1)
+            elif transform_type == 'skew_left':
+                # Shear matrix: [[1, -1], [0, 1]]
+                delta = sx.IntegerAffineTransform(1, -1, 0, 1, 0, 0)
+            elif transform_type == 'skew_right':
+                # Shear matrix: [[1, 1], [0, 1]]
+                delta = sx.IntegerAffineTransform(1, 1, 0, 1, 0, 0)
+            elif transform_type == 'rotate_left':
+                # 90° counter-clockwise: [[0, -1], [1, 0]]
+                delta = sx.IntegerAffineTransform(0, -1, 1, 0, 0, 0)
+            elif transform_type == 'rotate_right':
+                # 90° clockwise: [[0, 1], [-1, 0]]
+                delta = sx.IntegerAffineTransform(0, 1, -1, 0, 0, 0)
+            elif transform_type == 'reflect_horizontal':
+                # Mirror on Y-axis: [[-1, 0], [0, 1]]
+                delta = sx.IntegerAffineTransform(-1, 0, 0, 1, 0, 0)
+            elif transform_type == 'reflect_vertical':
+                # Mirror on X-axis: [[1, 0], [0, -1]]
+                delta = sx.IntegerAffineTransform(1, 0, 0, -1, 0, 0)
+            else:
+                logger.warning(f"Unknown transformation type: {transform_type}")
+                return self.mapping_transform
+        else:  # hex
+            if transform_type == 'shift_left':
+                delta = sx.IntegerAffineTransform(1, 0, 0, 1, -1, 0)
+            elif transform_type == 'shift_right':
+                delta = sx.IntegerAffineTransform(1, 0, 0, 1, 1, 0)
+            elif transform_type == 'shift_upright':
+                delta = sx.IntegerAffineTransform(1, 0, 0, 1, 0, 1)
+            elif transform_type == 'shift_downleft':
+                delta = sx.IntegerAffineTransform(1, 0, 0, 1, 0, -1)
+            elif transform_type == 'shift_upleft':
+                delta = sx.IntegerAffineTransform(1, 0, 0, 1, -1, 1)
+            elif transform_type == 'shift_downright':
+                delta = sx.IntegerAffineTransform(1, 0, 0, 1, 1, -1)
+            elif transform_type == 'skew_left':
+                delta = sx.IntegerAffineTransform(1, -1, 0, 1, 0, 0)
+            elif transform_type == 'skew_right':
+                delta = sx.IntegerAffineTransform(1, 1, 0, 1, 0, 0)
+            elif transform_type == 'skew_upright':
+                delta = sx.IntegerAffineTransform(1, 0, -1, 1, 0, 0)
+            elif transform_type == 'skew_downleft':
+                delta = sx.IntegerAffineTransform(1, 0, 1, 1, 0, 0)
+            elif transform_type == 'skew_upleft':
+                delta = sx.IntegerAffineTransform(2, 1, -1, 0, 0, 0)
+            elif transform_type == 'skew_downright':
+                delta = sx.IntegerAffineTransform(0, -1, 1, 2, 0, 0)
+            elif transform_type == 'rotate_left_hex':
+                delta = sx.IntegerAffineTransform(0, -1, 1, 1, 0, 0)
+            elif transform_type == 'rotate_right_hex':
+                delta = sx.IntegerAffineTransform(1, 1, -1, 0, 0, 0)
+            elif transform_type == 'reflect_x_hex':
+                delta = sx.IntegerAffineTransform(1, 1, 0, -1, 0, 0)
+            elif transform_type == 'reflect_y_hex':
+                delta = sx.IntegerAffineTransform(-1, 0, 1, 1, 0, 0)
+            elif transform_type == 'reflect_xy_hex':
+                delta = sx.IntegerAffineTransform(0, -1, -1, 0, 0, 0)
+            else:
+                logger.warning(f"Unknown transformation type: {transform_type}")
+                return self.mapping_transform            
 
         # Apply transformation by composing with delta
         M = self.mapping_transform
-        M_trans = scalatrix.IntegerAffineTransform(1, 0, 0, 1, M.tx, M.ty)
-        M_mat = scalatrix.IntegerAffineTransform(M.a, M.b, M.c, M.d, 0, 0)
+        M_trans = sx.IntegerAffineTransform(1, 0, 0, 1, M.tx, M.ty)
+        M_mat = sx.IntegerAffineTransform(M.a, M.b, M.c, M.d, 0, 0)
         self.mapping_transform = M_trans.applyAffine(delta.applyAffine(M_mat))
         return self.mapping_transform
 
@@ -101,7 +148,7 @@ class IsomorphicLayout(LayoutCalculator):
         logical_coords: List[Tuple[int, int]],
         scale_degrees: List[int],
         scale_size: int,
-        mos: Optional[scalatrix.MOS] = None,
+        mos: Optional[sx.MOS] = None,
         coord_to_scale_index: Optional[Dict[Tuple[int, int], int]] = None
     ) -> Dict[Tuple[int, int], int]:
         """
@@ -133,7 +180,7 @@ class IsomorphicLayout(LayoutCalculator):
         for logical_x, logical_y in logical_coords:
             try:
                 # Apply inverse transform to get MOS natural coordinate
-                logical_vec = scalatrix.Vector2i(logical_x, logical_y)
+                logical_vec = sx.Vector2i(logical_x, logical_y)
                 mos_coord = inverse_transform.apply(logical_vec)
                 mos_coord_tuple = (mos_coord.x, mos_coord.y)
 
@@ -177,7 +224,7 @@ class IsomorphicLayout(LayoutCalculator):
         """
         try:
             inverse_transform = self.mapping_transform.inverse()
-            logical_vec = scalatrix.Vector2i(logical_x, logical_y)
+            logical_vec = sx.Vector2i(logical_x, logical_y)
             mos_coord = inverse_transform.apply(logical_vec)
             return (mos_coord.x, mos_coord.y)
         except Exception as e:

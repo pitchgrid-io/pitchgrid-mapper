@@ -36,15 +36,21 @@ class PianoLikeLayout(LayoutCalculator):
         mos_coord = base_mos_coord + chroma_vec * accidental
     """
 
-    def __init__(self, config: LayoutConfig, default_root: Optional[Tuple[int, int]] = None):
+    def __init__(self, config: LayoutConfig, default_root: Optional[Tuple[int, int]] = None,
+                 row_to_col_angle: float = 90.0):
         """
         Initialize piano-like layout.
 
         Args:
             config: Layout configuration
             default_root: Default root coordinate from controller config
+            row_to_col_angle: Angle between row and column axes (from controller config)
         """
         super().__init__(config)
+
+        # Determine if controller is quad-like or hex-like
+        self.quad_or_hex = 'rect' if 75 < row_to_col_angle < 105 else 'hex'
+        logger.info(f"Piano-like layout mode: {self.quad_or_hex} (RowToColAngle={row_to_col_angle}°)")
 
         # Root position (where scale index 60 is mapped on the scale row)
         self.root_x, self.root_y = default_root if default_root else (0, 0)

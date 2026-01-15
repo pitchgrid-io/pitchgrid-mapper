@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import ControllerCanvas from './ControllerCanvas.svelte';
+  import TransformIcon from './TransformIcon.svelte';
 
   interface Pad {
     x: number;
@@ -23,6 +24,10 @@
     available_controllers: string[];
     detected_controllers: string[];
     controller_pads: Pad[];
+    controller_geometry: {
+      horizon_to_row_angle: number;
+      row_to_col_angle: number;
+    } | null;
     osc_connected: boolean;
     osc_port: number;
     tuning: {
@@ -78,6 +83,24 @@
   // Pad label type: 'digits' (default), 'letters', 'mos_coords', 'device_coords', or 'midi_note'
   type LabelType = 'digits' | 'letters' | 'mos_coords' | 'device_coords' | 'midi_note';
   let padLabelType: LabelType = 'digits';
+
+  // Helper to determine if controller is quad-like or hex-like
+  function isQuadLayout(status: AppStatus | null): boolean {
+    if (!status || !status.controller_geometry) return true; // Default to quad
+    const angle = status.controller_geometry.row_to_col_angle;
+    return angle > 75 && angle < 105;
+  }
+
+  // Get controller geometry angles with defaults
+  function getGeometry(status: AppStatus | null): { horizonAngle: number; rowToColAngle: number } {
+    if (!status || !status.controller_geometry) {
+      return { horizonAngle: 0, rowToColAngle: 90 };
+    }
+    return {
+      horizonAngle: status.controller_geometry.horizon_to_row_angle,
+      rowToColAngle: status.controller_geometry.row_to_col_angle,
+    };
+  }
 
   // Helper to check if controller is detected/available
   function isControllerAvailable(controllerName: string): boolean {
@@ -414,71 +437,141 @@
 
       <!-- Transformation Toolbar (for isomorphic layout) -->
       {#if status.layout_type === 'isomorphic'}
+        {@const geometry = getGeometry(status)}
+        {@const isQuad = isQuadLayout(status)}
         <div class="transformation-toolbar">
+          <!-- Shift operations -->
           <div class="toolbar-group">
             <span class="toolbar-label">Shift:</span>
-            <button class="toolbar-btn" on:click={() => handleTransformation('shift_left')} title="Shift Left">
-              ←
-            </button>
-            <button class="toolbar-btn" on:click={() => handleTransformation('shift_right')} title="Shift Right">
-              →
-            </button>
-            <button class="toolbar-btn" on:click={() => handleTransformation('shift_up')} title="Shift Up">
-              ↑
-            </button>
-            <button class="toolbar-btn" on:click={() => handleTransformation('shift_down')} title="Shift Down">
-              ↓
-            </button>
+            {#if isQuad}
+              <button class="toolbar-btn" on:click={() => handleTransformation('shift_left')} title="Shift Left">
+                <TransformIcon type="shift" direction="left" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('shift_right')} title="Shift Right">
+                <TransformIcon type="shift" direction="right" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('shift_up')} title="Shift Up">
+                <TransformIcon type="shift" direction="up" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('shift_down')} title="Shift Down">
+                <TransformIcon type="shift" direction="down" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+            {:else}
+              <button class="toolbar-btn" on:click={() => handleTransformation('shift_left')} title="Shift Left">
+                <TransformIcon type="shift" direction="left" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('shift_right')} title="Shift Right">
+                <TransformIcon type="shift" direction="right" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('shift_upright')} title="Shift Up-Right">
+                <TransformIcon type="shift" direction="upright" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('shift_downleft')} title="Shift Down-Left">
+                <TransformIcon type="shift" direction="downleft" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('shift_upleft')} title="Shift Up-Left">
+                <TransformIcon type="shift" direction="upleft" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('shift_downright')} title="Shift Down-Right">
+                <TransformIcon type="shift" direction="downright" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+            {/if}
           </div>
 
+          <!-- Skew operations -->
           <div class="toolbar-group">
             <span class="toolbar-label">Skew:</span>
-            <button class="toolbar-btn" on:click={() => handleTransformation('skew_left')} title="Skew Left">
-              ⇤
-            </button>
-            <button class="toolbar-btn" on:click={() => handleTransformation('skew_right')} title="Skew Right">
-              ⇥
-            </button>
+            {#if isQuad}
+              <button class="toolbar-btn" on:click={() => handleTransformation('skew_left')} title="Skew Left">
+                <TransformIcon type="skew" direction="left" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('skew_right')} title="Skew Right">
+                <TransformIcon type="skew" direction="right" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+            {:else}
+              <button class="toolbar-btn" on:click={() => handleTransformation('skew_left')} title="Skew Left">
+                <TransformIcon type="skew" direction="left" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('skew_right')} title="Skew Right">
+                <TransformIcon type="skew" direction="right" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('skew_upright')} title="Skew Up-Right">
+                <TransformIcon type="skew" direction="upright" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('skew_downleft')} title="Skew Down-Left">
+                <TransformIcon type="skew" direction="downleft" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('skew_upleft')} title="Skew Up-Left">
+                <TransformIcon type="skew" direction="upleft" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('skew_downright')} title="Skew Down-Right">
+                <TransformIcon type="skew" direction="downright" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+            {/if}
           </div>
 
+          <!-- Rotate operations -->
           <div class="toolbar-group">
             <span class="toolbar-label">Rotate:</span>
-            <button class="toolbar-btn" on:click={() => handleTransformation('rotate_left')} title="Rotate Left">
-              ↺
-            </button>
-            <button class="toolbar-btn" on:click={() => handleTransformation('rotate_right')} title="Rotate Right">
-              ↻
-            </button>
+            {#if isQuad}
+              <button class="toolbar-btn" on:click={() => handleTransformation('rotate_left')} title="Rotate Left (90°)">
+                <TransformIcon type="rotate" direction="left" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('rotate_right')} title="Rotate Right (90°)">
+                <TransformIcon type="rotate" direction="right" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+            {:else}
+              <button class="toolbar-btn" on:click={() => handleTransformation('rotate_left_hex')} title="Rotate Left (60°)">
+                <TransformIcon type="rotate" direction="left_hex" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('rotate_right_hex')} title="Rotate Right (60°)">
+                <TransformIcon type="rotate" direction="right_hex" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+            {/if}
           </div>
 
+          <!-- Reflect operations -->
           <div class="toolbar-group">
             <span class="toolbar-label">Reflect:</span>
-            <button class="toolbar-btn" on:click={() => handleTransformation('reflect_horizontal')} title="Reflect Horizontal">
-              ↔
-            </button>
-            <button class="toolbar-btn" on:click={() => handleTransformation('reflect_vertical')} title="Reflect Vertical">
-              ↕
-            </button>
+            {#if isQuad}
+              <button class="toolbar-btn" on:click={() => handleTransformation('reflect_horizontal')} title="Reflect Horizontal">
+                <TransformIcon type="reflect" direction="left" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('reflect_vertical')} title="Reflect Vertical">
+                <TransformIcon type="reflect" direction="up" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+            {:else}
+              <button class="toolbar-btn" on:click={() => handleTransformation('reflect_x_hex')} title="Reflect X">
+                <TransformIcon type="reflect" direction="x_hex" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('reflect_y_hex')} title="Reflect Y">
+                <TransformIcon type="reflect" direction="y_hex" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+              <button class="toolbar-btn" on:click={() => handleTransformation('reflect_xy_hex')} title="Reflect XY">
+                <TransformIcon type="reflect" direction="xy_hex" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
+              </button>
+            {/if}
           </div>
         </div>
       {/if}
 
       <!-- Transformation Toolbar (for string-like layout) -->
       {#if status.layout_type === 'string_like'}
+        {@const geometry = getGeometry(status)}
         <div class="transformation-toolbar">
           <div class="toolbar-group">
             <span class="toolbar-label">Shift:</span>
             <button class="toolbar-btn" on:click={() => handleTransformation('shift_left')} title="Shift Left (along string)">
-              ←
+              <TransformIcon type="shift" direction="left" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
             </button>
             <button class="toolbar-btn" on:click={() => handleTransformation('shift_right')} title="Shift Right (along string)">
-              →
+              <TransformIcon type="shift" direction="right" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
             </button>
             <button class="toolbar-btn" on:click={() => handleTransformation('shift_up')} title="Shift Up (between strings)">
-              ↑
+              <TransformIcon type="shift" direction="up" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
             </button>
             <button class="toolbar-btn" on:click={() => handleTransformation('shift_down')} title="Shift Down (between strings)">
-              ↓
+              <TransformIcon type="shift" direction="down" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
             </button>
           </div>
 
@@ -494,11 +587,11 @@
 
           <div class="toolbar-group">
             <span class="toolbar-label">Reflect:</span>
-            <button class="toolbar-btn" on:click={() => handleTransformation('reflect_horizontal')} title="Reflect Horizontal (reverse notes + row offset)">
-              ↔
+            <button class="toolbar-btn" on:click={() => handleTransformation('reflect_horizontal')} title="Reflect Horizontal">
+              <TransformIcon type="reflect" direction="left" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
             </button>
-            <button class="toolbar-btn" on:click={() => handleTransformation('reflect_vertical')} title="Reflect Vertical (negate row offset)">
-              ↕
+            <button class="toolbar-btn" on:click={() => handleTransformation('reflect_vertical')} title="Reflect Vertical">
+              <TransformIcon type="reflect" direction="up" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
             </button>
           </div>
         </div>
@@ -506,20 +599,21 @@
 
       <!-- Transformation Toolbar (for piano-like layout) -->
       {#if status.layout_type === 'piano_like'}
+        {@const geometry = getGeometry(status)}
         <div class="transformation-toolbar">
           <div class="toolbar-group">
             <span class="toolbar-label">Shift:</span>
             <button class="toolbar-btn" on:click={() => handleTransformation('shift_left')} title="Shift Left (along scale)">
-              ←
+              <TransformIcon type="shift" direction="left" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
             </button>
             <button class="toolbar-btn" on:click={() => handleTransformation('shift_right')} title="Shift Right (along scale)">
-              →
+              <TransformIcon type="shift" direction="right" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
             </button>
             <button class="toolbar-btn" on:click={() => handleTransformation('shift_up')} title="Shift Up (between strips)">
-              ↑
+              <TransformIcon type="shift" direction="up" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
             </button>
             <button class="toolbar-btn" on:click={() => handleTransformation('shift_down')} title="Shift Down (between strips)">
-              ↓
+              <TransformIcon type="shift" direction="down" horizonToRowAngle={geometry.horizonAngle} rowToColAngle={geometry.rowToColAngle} />
             </button>
           </div>
 
