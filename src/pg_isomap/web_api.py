@@ -42,7 +42,7 @@ class WebAPI:
 
     def __init__(self, app: PGIsomapApp):
         self.app = app
-        self.fastapi = FastAPI(title="PitchGrid Mapper API", version=settings.version)
+        self.fastapi = FastAPI(title="PitchGrid Mapper API", version=settings.app_version)
 
         # Set reference back to app so it can broadcast updates
         self.app.web_api = self

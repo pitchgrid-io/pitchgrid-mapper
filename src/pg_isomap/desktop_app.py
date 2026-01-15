@@ -92,7 +92,7 @@ class DesktopApp:
 
         # Create window
         self.window = webview.create_window(
-            title=f"{settings.app_full_name} v{settings.version}",
+            title=f"{settings.app_full_name} v{settings.app_version}",
             url=url,
             width=1280,
             height=800,
@@ -170,7 +170,7 @@ def main():
         ],
     )
 
-    logger.info(f"Starting {settings.app_name} v{settings.version}")
+    logger.info(f"Starting {settings.app_name} v{settings.app_version}")
 
     # Create and run desktop app
     app = DesktopApp()

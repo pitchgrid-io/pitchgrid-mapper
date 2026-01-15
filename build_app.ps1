@@ -96,11 +96,20 @@ if (Test-Path "build") { Remove-Item -Recurse -Force "build" }
 if (Test-Path "dist") { Remove-Item -Recurse -Force "dist" }
 Write-Host "  Cleaned"
 
+# Create version file for runtime
+Write-Host ""
+Write-Host "Creating version file..." -ForegroundColor Yellow
+$AppVersion | Out-File -FilePath "_version.txt" -Encoding ASCII -NoNewline
+Write-Host "  Version file created: $AppVersion"
+
 # Build with PyInstaller
 Write-Host ""
 Write-Host "Building application with PyInstaller..." -ForegroundColor Yellow
 uv run pyinstaller pg_isomap_win.spec
 Write-Host "  PyInstaller build complete"
+
+# Clean up version file
+if (Test-Path "_version.txt") { Remove-Item "_version.txt" }
 
 # Verify build output
 if (-not (Test-Path "dist\$AppName\$AppName.exe")) {

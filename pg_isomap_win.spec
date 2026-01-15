@@ -43,6 +43,7 @@ a = Analysis(
     datas=[
         (frontend_dist, 'frontend/dist'),
         (controller_config, 'controller_config'),
+        ('_version.txt', '.'),  # Include version file for runtime
     ],
     hiddenimports=[
         'pg_isomap',

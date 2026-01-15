@@ -38,9 +38,16 @@ uv sync --extra build
 # Clean previous builds
 rm -rf build/ dist/
 
+# Create version file for runtime
+echo "📝 Creating version file..."
+echo "${APP_VERSION:-0.1.0}" > _version.txt
+
 # Build the application
 echo "🔨 Building application with PyInstaller..."
 uv run pyinstaller pg_isomap.spec
+
+# Clean up version file
+rm -f _version.txt
 
 # Sign the app
 echo ""

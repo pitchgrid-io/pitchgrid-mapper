@@ -4,4 +4,6 @@ PitchGrid Mapper
 A universal mapper between PitchGrid microtonal scales and isomorphic MIDI controllers.
 """
 
-__version__ = "0.1.0"
+from .config import settings
+
+__version__ = settings.app_version

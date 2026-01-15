@@ -1,6 +1,6 @@
 [project]
 name = "pg-isomap"
-version = "0.1.0"
+version = "0.2.0"
 description = "PitchGrid Isomorphic Controller Mapper - Universal microtonal scale mapper for isomorphic MIDI controllers"
 authors = [
     {name = "PitchGrid", email = "info@pitchgrid.io"}

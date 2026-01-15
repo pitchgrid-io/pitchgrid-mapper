@@ -1,10 +1,12 @@
 """Configuration management for PitchGrid Mapper."""
 
+import os
 import sys
 from pathlib import Path
 from typing import Optional
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
 def _get_base_path() -> Path:
@@ -17,13 +19,32 @@ def _get_base_path() -> Path:
         return Path(__file__).parent.parent.parent
 
 
+def _get_app_version() -> str:
+    """Get app version from environment or version file."""
+    # Check for environment variable first (set at build time or in .env)
+    version = os.getenv('APP_VERSION')
+    if version:
+        return version
+
+    # If frozen (bundled app), try to read from version file created at build time
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        version_file = Path(sys._MEIPASS) / '_version.txt'
+        if version_file.exists():
+            try:
+                return version_file.read_text().strip()
+            except Exception:
+                pass
+
+    return "0.1.0"  # Fallback default
+
+
 class Settings(BaseSettings):
     """Application settings."""
 
-    # Application
-    app_name: str = "PitchGrid Mapper"
+    # Application - these use unprefixed env vars to match build scripts
+    app_name: str = Field(default="PitchGrid Mapper", validation_alias="APP_NAME")
     app_full_name: str = "PitchGrid Isomorphic Controller Mapper"
-    version: str = "0.1.0"
+    app_version: str = Field(default_factory=_get_app_version, validation_alias="APP_VERSION")
     debug: bool = False
 
     # MIDI
@@ -46,10 +67,11 @@ class Settings(BaseSettings):
     controller_config_dir: Path = _get_base_path() / "controller_config"
     frontend_dist_dir: Optional[Path] = _get_base_path() / "frontend" / "dist"
 
-    class Config:
-        env_prefix = "PGISOMAP_"
-        env_file = ".env"
-        extra = "ignore"  # Ignore extra env vars (like Azure signing config)
+    model_config = SettingsConfigDict(
+        env_prefix="PGISOMAP_",
+        env_file=".env",
+        extra="ignore"  # Ignore extra env vars (like Azure signing config)
+    )
 
 
 settings = Settings()

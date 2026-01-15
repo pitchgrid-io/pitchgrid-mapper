@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Main entry point."""
-    logger.info(f"Starting {settings.app_name} v{settings.version}")
+    logger.info(f"Starting {settings.app_name} v{settings.app_version}")
 
     # Create application
     app = PGIsomapApp()
