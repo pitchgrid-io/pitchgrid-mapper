@@ -37,6 +37,9 @@
     : 1.0;
   $: fontSize = padHeight * 0.25;
 
+  // Check if this pad is at MOS origin (0,0)
+  $: isMosOrigin = mosCoord != null && mosCoord[0] === 0 && mosCoord[1] === 0;
+
   function generatePath(vertices: Array<[number, number]>, centerX: number, centerY: number): string {
     if (vertices.length === 0) return '';
 
@@ -103,8 +106,8 @@
   <path
     d={shapePath}
     fill={isActive ? '#ff4444' : color}
-    stroke={isActive ? '#ff6666' : '#555555'}
-    stroke-width="0.05"
+    stroke={isMosOrigin ? '#ffffff' : (isActive ? '#ff6666' : '#555555')}
+    stroke-width={1}
   />
   <text
     x={phys_x}
@@ -126,6 +129,6 @@
 
   .pad:hover path {
     stroke: #6ee0d4;
-    stroke-width: 0.08;
+    stroke-width: 1;
   }
 </style>

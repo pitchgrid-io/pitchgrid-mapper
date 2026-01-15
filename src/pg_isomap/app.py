@@ -402,25 +402,23 @@ class PGIsomapApp:
 
         if len(args) >= 7:
             # Parse tuning data: (depth, mode, root_freq, stretch, skew, mode_offset, steps)
-            try:
-                depth, mode, root_freq, stretch, skew, mode_offset, steps = args[:7]
+            
+            depth, mode, root_freq, stretch, skew, mode_offset, steps = args[:7]
 
-                # Update tuning handler
-                self.tuning_handler.update_tuning(
-                    depth=depth,
-                    mode=mode,
-                    root_freq=root_freq,
-                    stretch=stretch,
-                    skew=skew,
-                    mode_offset=mode_offset,
-                    steps=steps
-                )
+            # Update tuning handler
+            self.tuning_handler.update_tuning(
+                depth=depth,
+                mode=mode,
+                root_freq=root_freq,
+                stretch=stretch,
+                skew=skew,
+                mode_offset=mode_offset,
+                steps=steps
+            )
 
-                # Recalculate layout with new scale degrees
-                self._recalculate_layout()
+            # Recalculate layout with new scale degrees
+            self._recalculate_layout()
 
-            except Exception as e:
-                logger.error(f"Error processing tuning data: {e}")
         else:
             logger.warning(f"Unexpected scale data format: {args}")
 

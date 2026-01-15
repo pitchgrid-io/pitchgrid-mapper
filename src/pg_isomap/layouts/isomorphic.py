@@ -40,15 +40,26 @@ class IsomorphicLayout(LayoutCalculator):
         logger.info(f"Isomorphic layout mode: {self.quad_or_hex} (RowToColAngle={row_to_col_angle}°)")
 
         # Initialize mapping transform
-        # Matrix: ((1, 0), (0, 1)) = identity
-        # Offset: default_root or (0, 0)
+        # Start with identity matrix + translation to default root
+        # Will be updated with MOS-specific transform when calculate_mapping is called
         root_x, root_y = default_root if default_root else (0, 0)
 
         self.mapping_transform = sx.IntegerAffineTransform(
-            1, 0,   # First row: a, b
-            0, 1,   # Second row: c, d
-            root_x, root_y  # Offset: tx, ty
+            1,0,0,1,
+            root_x,
+            root_y
         )
+        self.mapping_transform = sx.IntegerAffineTransform(
+            1, 0,   # First row: a, b (identity)
+            0, 1,   # Second row: c, d (identity)
+            root_x, root_y  # Translation to default root position
+        )
+        self.initialized = False
+        self.mos_root_device_coord = sx.Vector2d(root_x, root_y)
+        self.mos_period_device_coord = sx.Vector2d(root_x + 1, root_y + 2)
+        self.mos_generator_device_coord = sx.Vector2d(root_x + 1, root_y + 1)
+        self.mos_period = sx.Vector2i(1, 1)  # To be set when MOS is provided
+        self.mos_generator = sx.Vector2i(1, 0)  # To be set when MOS is provided
 
     def set_transform(self, transform: sx.IntegerAffineTransform):
         """Set the mapping transform directly."""
@@ -162,6 +173,71 @@ class IsomorphicLayout(LayoutCalculator):
 
         if not scale_degrees:
             return mapping
+
+        # If MOS is available and transform is still identity, initialize with MOS-based mapping
+        if mos is not None:
+            if not self.initialized:
+                # Calculate initial transform using affineFromThreeDots
+                # Maps MOS coordinates to logical device coordinates
+                root_x, root_y = self.mapping_transform.tx, self.mapping_transform.ty
+                try:
+                    initial_transform = sx.affineFromThreeDots(
+                        sx.Vector2d(0, 0),                        # Origin in MOS space
+                        sx.Vector2d(mos.a, mos.b),                # Period vector in MOS space
+                        sx.Vector2d(mos.v_gen.x, mos.v_gen.y),    # Generator vector in MOS space
+                        self.mos_root_device_coord,              # Maps to root on device
+                        self.mos_period_device_coord,      # Maps period to (+2, +2) on device
+                        self.mos_generator_device_coord       # Maps generator to (+2, +1) on device
+                    )
+                    self.mapping_transform = sx.IntegerAffineTransform(
+                        int(round(initial_transform.a)),
+                        int(round(initial_transform.b)),
+                        int(round(initial_transform.c)),
+                        int(round(initial_transform.d)),
+                        root_x,
+                        root_y
+                    )
+                    self.mos_period = sx.Vector2i(mos.a, mos.b)
+                    self.mos_generator = sx.Vector2i(mos.v_gen.x, mos.v_gen.y)
+                    logger.info(f"Initialized MOS-based transform: "
+                            f"[{self.mapping_transform.a}, {self.mapping_transform.b}; "
+                            f"{self.mapping_transform.c}, {self.mapping_transform.d}] + "
+                            f"({self.mapping_transform.tx}, {self.mapping_transform.ty})")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize MOS-based transform: {e}, using identity")
+                self.initialized = True
+            elif (self.mos_period.x, self.mos_period.y) != (mos.a, mos.b) or (self.mos_generator.x, self.mos_generator.y) != (mos.v_gen.x, mos.v_gen.y):
+                mos_root_device_coord_i = self.mapping_transform.apply(sx.Vector2i(0, 0))
+                self.mos_root_device_coord = sx.Vector2d(mos_root_device_coord_i.x, mos_root_device_coord_i.y)
+                mos_period_device_coord_i = self.mapping_transform.apply(self.mos_period)
+                self.mos_period_device_coord = sx.Vector2d(mos_period_device_coord_i.x, mos_period_device_coord_i.y)
+                mos_generator_device_coord_i = self.mapping_transform.apply(self.mos_generator)
+                self.mos_generator_device_coord = sx.Vector2d(mos_generator_device_coord_i.x, mos_generator_device_coord_i.y)
+                try:
+                    initial_transform = sx.affineFromThreeDots(
+                        sx.Vector2d(0, 0),                        # Origin in MOS space
+                        sx.Vector2d(mos.a, mos.b),                # Period vector in MOS space
+                        sx.Vector2d(mos.v_gen.x, mos.v_gen.y),    # Generator vector in MOS space
+                        self.mos_root_device_coord,              # Maps to root on device
+                        self.mos_period_device_coord,      # Maps period to (+2, +2) on device
+                        self.mos_generator_device_coord       # Maps generator to (+2, +1) on device
+                    )
+                    self.mapping_transform = sx.IntegerAffineTransform(
+                        int(round(initial_transform.a)),
+                        int(round(initial_transform.b)),
+                        int(round(initial_transform.c)),
+                        int(round(initial_transform.d)),
+                        int(round(initial_transform.tx)),
+                        int(round(initial_transform.ty))
+                    )
+                    self.mos_period = sx.Vector2i(mos.a, mos.b)
+                    self.mos_generator = sx.Vector2i(mos.v_gen.x, mos.v_gen.y)
+                    logger.info(f"Initialized MOS-based transform: "
+                            f"[{self.mapping_transform.a}, {self.mapping_transform.b}; "
+                            f"{self.mapping_transform.c}, {self.mapping_transform.d}] + "
+                            f"({self.mapping_transform.tx}, {self.mapping_transform.ty})")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize MOS-based transform: {e}, using identity")                
 
         # Get the inverse transform to map logical -> MOS coordinates
         try:
