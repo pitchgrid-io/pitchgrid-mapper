@@ -575,6 +575,7 @@ class PGIsomapApp:
                     'mos_label_letter': mos_label_letter,
                 })
 
+        import sys
         return {
             'connected_controller': self.current_controller.device_name if self.current_controller else None,
             'midi_connected': self.midi_handler.is_controller_connected(),
@@ -589,7 +590,8 @@ class PGIsomapApp:
             'midi_stats': {
                 'messages_processed': self.midi_handler.messages_processed,
                 'notes_remapped': self.midi_handler.notes_remapped,
-            }
+            },
+            'platform': sys.platform,  # 'win32', 'darwin', 'linux'
         }
 
     def _send_controller_setup(self):

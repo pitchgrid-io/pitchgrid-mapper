@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     class Config:
         env_prefix = "PGISOMAP_"
         env_file = ".env"
+        extra = "ignore"  # Ignore extra env vars (like Azure signing config)
 
 
 settings = Settings()

@@ -40,6 +40,7 @@
       messages_processed: number;
       notes_remapped: number;
     };
+    platform: string;  // 'win32', 'darwin', 'linux'
   }
 
   let ws: WebSocket | null = null;
@@ -583,7 +584,7 @@
           ● OSC: {status.osc_connected ? `Connected (${status.osc_port})` : 'Disconnected'}
         </span>
 
-        {#if status.connected_controller === 'Computer Keyboard' && !hasUserActivation}
+        {#if status.connected_controller === 'Computer Keyboard' && !hasUserActivation && status.platform === 'darwin'}
           <span class="badge activation-hint">⚠ Click anywhere to enable keyboard</span>
         {/if}
       </div>

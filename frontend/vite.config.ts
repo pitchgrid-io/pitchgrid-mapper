@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [svelte()],
   server: {
     port: 5173,
+    strictPort: true,  // Fail if port 5173 is in use rather than using a random port
     proxy: {
       '/api': {
         target: 'http://localhost:8080',

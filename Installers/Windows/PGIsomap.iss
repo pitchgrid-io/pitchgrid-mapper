@@ -72,10 +72,12 @@ Filename: "{app}\{#ApplicationExeName}.exe"; Description: "{cm:LaunchProgram,{#S
 function IsWebView2Installed: Boolean;
 var
   RegKey: String;
+  RegKey32: String;
   Version: String;
 begin
   Result := False;
   RegKey := 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+  RegKey32 := 'Software\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
 
   // Check user install
   if RegQueryStringValue(HKEY_CURRENT_USER, RegKey, 'pv', Version) then
@@ -84,7 +86,17 @@ begin
       Result := True;
   end;
 
-  // Check machine install (32-bit registry view)
+  // Check machine install (32-bit registry view via WOW6432Node - most common location)
+  if not Result then
+  begin
+    if RegQueryStringValue(HKEY_LOCAL_MACHINE, RegKey32, 'pv', Version) then
+    begin
+      if Version <> '' then
+        Result := True;
+    end;
+  end;
+
+  // Check machine install (native path)
   if not Result then
   begin
     if RegQueryStringValue(HKEY_LOCAL_MACHINE, RegKey, 'pv', Version) then
@@ -108,7 +120,9 @@ begin
   if not Result then
   begin
     RegKey := 'Software\Microsoft\EdgeUpdate\Clients\{56EB18F8-B008-4CBD-B6D2-8C97FE7E9062}';
-    if RegQueryStringValue(HKEY_LOCAL_MACHINE, RegKey, 'pv', Version) or
+    RegKey32 := 'Software\WOW6432Node\Microsoft\EdgeUpdate\Clients\{56EB18F8-B008-4CBD-B6D2-8C97FE7E9062}';
+    if RegQueryStringValue(HKEY_LOCAL_MACHINE, RegKey32, 'pv', Version) or
+       RegQueryStringValue(HKEY_LOCAL_MACHINE, RegKey, 'pv', Version) or
        RegQueryStringValue(HKEY_LOCAL_MACHINE_64, RegKey, 'pv', Version) then
     begin
       if Version <> '' then

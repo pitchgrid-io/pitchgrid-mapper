@@ -44,6 +44,9 @@ if (-not (Test-Path $ExePath)) {
     exit 1
 }
 
+# Convert to absolute path (required by sign CLI)
+$ExePath = (Resolve-Path $ExePath).Path
+
 Write-Host "  Executable: $ExePath"
 
 # Check Azure Trusted Signing configuration
@@ -69,6 +72,22 @@ if (-not $CertProfile) {
     # Default to same profile as pitchgrid-plugin
     $CertProfile = "pitchgrid"
     Write-Host "  Using default certificate profile: $CertProfile" -ForegroundColor Yellow
+}
+
+# Ensure dotnet is in PATH (workaround for winget PATH issue)
+$dotnetPath = "C:\Program Files\dotnet"
+if (Test-Path $dotnetPath) {
+    if ($env:PATH -notlike "*$dotnetPath*") {
+        Write-Host "Adding dotnet to PATH..." -ForegroundColor Yellow
+        $env:PATH = "$dotnetPath;$env:PATH"
+    }
+}
+
+# Verify dotnet is available
+$dotnetCmd = Get-Command dotnet -ErrorAction SilentlyContinue
+if (-not $dotnetCmd) {
+    Write-Host "Error: .NET SDK not found. Please install it from https://dotnet.microsoft.com/download" -ForegroundColor Red
+    exit 1
 }
 
 # Install TrustedSigning module if needed
