@@ -822,43 +822,46 @@
 
   .transformation-toolbar {
     display: flex;
-    gap: 1.5em;
+    gap: 1em;
     align-items: center;
-    padding: 1em;
+    padding: 0.5em 0.75em;
     background-color: rgba(84, 206, 194, 0.05);
     border-radius: 4px;
-    margin-bottom: 1em;
+    margin-bottom: 0.75em;
     flex-wrap: wrap;
   }
 
   .toolbar-group {
     display: flex;
-    gap: 0.5em;
+    gap: 0;
     align-items: center;
   }
 
   .toolbar-label {
-    font-size: 0.9em;
+    font-size: 0.85em;
     font-weight: 500;
     color: #54cec2;
+    margin-right: 0.4em;
   }
 
   .toolbar-btn {
-    padding: 0.5em 0.75em;
+    padding: 0.35em 0.5em;
     border: 1px solid #444;
     border-radius: 4px;
     background-color: #1a1a1a;
     color: #d4d4d4;
-    font-size: 1.2em;
+    font-size: 1em;
     cursor: pointer;
     transition: all 0.2s;
-    min-width: 2.5em;
+    min-width: 2em;
+    position: relative;
   }
 
   .toolbar-btn:hover {
     background-color: #2a2a2a;
     border-color: #54cec2;
     color: #54cec2;
+    z-index: 2;
   }
 
   .toolbar-btn:active {

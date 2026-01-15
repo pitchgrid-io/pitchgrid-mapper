@@ -77,23 +77,17 @@ class IsomorphicLayout(LayoutCalculator):
             elif transform_type == 'shift_down':
                 delta = sx.IntegerAffineTransform(1, 0, 0, 1, 0, -1)
             elif transform_type == 'skew_left':
-                # Shear matrix: [[1, -1], [0, 1]]
                 delta = sx.IntegerAffineTransform(1, -1, 0, 1, 0, 0)
             elif transform_type == 'skew_right':
-                # Shear matrix: [[1, 1], [0, 1]]
                 delta = sx.IntegerAffineTransform(1, 1, 0, 1, 0, 0)
             elif transform_type == 'rotate_left':
-                # 90° counter-clockwise: [[0, -1], [1, 0]]
                 delta = sx.IntegerAffineTransform(0, -1, 1, 0, 0, 0)
             elif transform_type == 'rotate_right':
-                # 90° clockwise: [[0, 1], [-1, 0]]
                 delta = sx.IntegerAffineTransform(0, 1, -1, 0, 0, 0)
             elif transform_type == 'reflect_horizontal':
-                # Mirror on Y-axis: [[-1, 0], [0, 1]]
-                delta = sx.IntegerAffineTransform(-1, 0, 0, 1, 0, 0)
-            elif transform_type == 'reflect_vertical':
-                # Mirror on X-axis: [[1, 0], [0, -1]]
                 delta = sx.IntegerAffineTransform(1, 0, 0, -1, 0, 0)
+            elif transform_type == 'reflect_vertical':
+                delta = sx.IntegerAffineTransform(-1, 0, 0, 1, 0, 0)
             else:
                 logger.warning(f"Unknown transformation type: {transform_type}")
                 return self.mapping_transform
