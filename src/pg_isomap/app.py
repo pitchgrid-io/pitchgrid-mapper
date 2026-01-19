@@ -543,16 +543,14 @@ class PGIsomapApp:
                     # Get MOS coordinate for this pad
                     mos_coord = self.current_layout_calculator.get_mos_coordinate(x, y)
 
-                    # For string-like layouts, use dark colors for off-scale notes
-                    use_dark_offscale = (self.current_layout_config.layout_type == LayoutType.STRING_LIKE)
-
-                    # Use coloring scheme to determine color
+                    # Use coloring scheme to determine color (for UI display)
+                    # Note: For UI, we always show the standard colors to maintain visual clarity
                     color = DEFAULT_COLORING_SCHEME.get_color(
                         mos_coord=mos_coord,
                         mos=self.tuning_handler.mos,
                         coord_to_scale_index=self.tuning_handler.coord_to_scale_index,
                         supermos=None,
-                        use_dark_offscale=use_dark_offscale
+                        use_dark_offscale=False
                     )
                 elif mapped_note is not None:
                     # Fallback: simple hue based on note number
@@ -696,12 +694,24 @@ class PGIsomapApp:
             status = self.get_status()
             controller_pads = status.get('controller_pads', [])
 
+            # For string-like layouts, recalculate colors with dark off-scale for device
+            use_dark_offscale = (self.current_layout_config.layout_type == LayoutType.STRING_LIKE)
+
             # Build pad data with RGB colors for ALL pads
             pads_with_colors = []
             for pad in controller_pads:
-                # Convert HSL color to RGB
-                # Use gray for unmapped pads, otherwise use pad's color
-                if pad.get('color'):
+                # For device colors, recalculate with use_dark_offscale if needed
+                if use_dark_offscale and pad.get('mos_coord') and self.tuning_handler.mos:
+                    device_color = DEFAULT_COLORING_SCHEME.get_color(
+                        mos_coord=pad['mos_coord'],
+                        mos=self.tuning_handler.mos,
+                        coord_to_scale_index=self.tuning_handler.coord_to_scale_index,
+                        supermos=None,
+                        use_dark_offscale=True
+                    )
+                    hsl_color = device_color if device_color else 'hsl(0, 0%, 20%)'
+                elif pad.get('color'):
+                    # Use UI color for device
                     hsl_color = pad['color']
                 else:
                     # Unmapped pad - use dark gray
