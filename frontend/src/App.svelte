@@ -729,10 +729,6 @@
         <span class="badge osc-indicator" class:osc-connected={status.osc_connected}>
           ● OSC: {status.osc_connected ? `Connected (${status.osc_port})` : 'Disconnected'}
         </span>
-
-        {#if status.connected_controller === 'Computer Keyboard' && !hasUserActivation && status.platform === 'darwin'}
-          <span class="badge activation-hint">⚠ Click anywhere to enable keyboard</span>
-        {/if}
       </div>
     </div>
   {:else}
@@ -836,18 +832,6 @@
     color: #54cec2;
     background-color: rgba(84, 206, 194, 0.15);
     border: 1px solid rgba(84, 206, 194, 0.3);
-  }
-
-  .activation-hint {
-    color: #ffa500;
-    background-color: rgba(255, 165, 0, 0.15);
-    border: 1px solid rgba(255, 165, 0, 0.3);
-    animation: pulse 1.5s ease-in-out infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.6; }
   }
 
   button:disabled {
