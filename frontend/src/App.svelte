@@ -713,7 +713,7 @@
         </span>
 
         <span class="badge osc-indicator" class:osc-connected={status.osc_connected}>
-          ● OSC: {status.osc_connected ? `Connected (${status.osc_port})` : 'Disconnected'}
+          ● Tuning sync via OSC: {status.osc_connected ? 'Connected' : 'Disconnected'}
         </span>
       </div>
     </div>
