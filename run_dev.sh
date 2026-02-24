@@ -37,8 +37,8 @@ if ! uv run python --version | grep -q "3.12"; then
 fi
 
 # Install/sync dependencies
-echo "Syncing Python dependencies..."
-uv sync
+echo "Syncing Python dependencies (upgrading scalatrix to latest)..."
+uv sync --upgrade-package scalatrix
 
 # Check if npm is installed
 if ! command -v npm &> /dev/null; then
