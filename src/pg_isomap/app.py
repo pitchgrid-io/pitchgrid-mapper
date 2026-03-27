@@ -66,11 +66,17 @@ class PGIsomapApp:
         self._cached_midi_ports: list[str] = []
         self._ports_lock = threading.Lock()
 
+        # Cached per-pad device color data for restoring after note-off
+        # Maps (logical_x, logical_y) -> {'red', 'green', 'blue', 'color'}
+        self._pad_device_colors: dict[tuple[int, int], dict] = {}
+
         # Setup callbacks
         self.osc_handler.on_scale_update = self._handle_scale_update
         self.osc_handler.on_mapping_update = self._handle_mapping_update
         self.osc_handler.on_note_mapping = self._handle_note_mapping
         self.osc_handler.on_connection_changed = self._handle_osc_connection_changed
+        self.osc_handler.on_plugin_note_on = self._handle_plugin_note_on
+        self.osc_handler.on_plugin_note_off = self._handle_plugin_note_off
         self.midi_handler.get_scale_coord = self._get_scale_coordinate
         self.midi_handler.on_note_event = self._handle_note_event
 
@@ -421,6 +427,10 @@ class PGIsomapApp:
             logger.warning("No controller loaded, cannot calculate layout")
             return
 
+        # Clear all playing note highlights before layout changes shift pads around
+        if self.web_api:
+            self.web_api.broadcast_clear_all_notes()
+
         # Create layout calculator only if we don't have one or if the type changed
         needs_new_calculator = (
             self.current_layout_calculator is None or
@@ -479,6 +489,9 @@ class PGIsomapApp:
         # Determine if channel should be used for reverse lookup
         # Controllers with channelAssign (e.g., Lumatone) need channel-based lookup
         use_channel_for_lookup = self.current_controller.channel_assign is not None
+
+        # Build MOS → logical reverse mapping for plugin note highlighting
+        self.current_layout_calculator.build_mos_to_logical_mapping(logical_coords)
 
         # Stop only notes whose mapping actually changed (prevents unnecessary note-offs)
         self.midi_handler.stop_notes_with_changed_mapping(mapping)
@@ -560,9 +573,30 @@ class PGIsomapApp:
             self.web_api.broadcast_status_update()
 
     def _handle_note_event(self, logical_x: int, logical_y: int, note_on: bool):
-        """Handle note event from MIDI handler (for UI highlighting)."""
+        """Handle note event from MIDI handler (for UI and controller pad highlighting)."""
         if self.web_api:
             self.web_api.broadcast_note_event(logical_x, logical_y, note_on)
+
+        # Send color to physical controller if it supports SetPadColor
+        self._send_pad_playing_color(logical_x, logical_y, note_on)
+
+    def _handle_plugin_note_on(self, root_x: int, root_y: int, velocity: int):
+        """Handle note_on from PitchGrid plugin (root coords) - highlight corresponding pads."""
+        if not self.current_layout_calculator or not self.tuning_handler.mos:
+            return
+        mos_coord = self.tuning_handler.mos.fromRootCoord(sx.Vector2i(root_x, root_y))
+        logical_coords = self.current_layout_calculator.mos_to_logical.get((mos_coord.x, mos_coord.y), [])
+        for lx, ly in logical_coords:
+            self._handle_note_event(lx, ly, True)
+
+    def _handle_plugin_note_off(self, root_x: int, root_y: int):
+        """Handle note_off from PitchGrid plugin (root coords) - un-highlight corresponding pads."""
+        if not self.current_layout_calculator or not self.tuning_handler.mos:
+            return
+        mos_coord = self.tuning_handler.mos.fromRootCoord(sx.Vector2i(root_x, root_y))
+        logical_coords = self.current_layout_calculator.mos_to_logical.get((mos_coord.x, mos_coord.y), [])
+        for lx, ly in logical_coords:
+            self._handle_note_event(lx, ly, False)
 
     def _get_scale_coordinate(self, logical_x: int, logical_y: int) -> Optional[tuple[int, int]]:
         """
@@ -905,6 +939,12 @@ class PGIsomapApp:
             if not pads_with_colors:
                 return
 
+            # Cache device colors for restoring after note-off highlights
+            self._pad_device_colors = {
+                (p['x'], p['y']): {'red': p['red'], 'green': p['green'], 'blue': p['blue'], 'color': p['color']}
+                for p in pads_with_colors
+            }
+
             # Build and send MIDI message
             builder = MIDITemplateBuilder(self.current_controller)
 
@@ -937,6 +977,39 @@ class PGIsomapApp:
 
         except Exception as e:
             logger.error(f"Error sending pad colors: {e}", exc_info=True)
+
+    # Playing highlight color (red, matching UI active note color)
+    _PLAYING_RGB = (255, 0, 0)
+
+    def _send_pad_playing_color(self, logical_x: int, logical_y: int, note_on: bool):
+        """Send a playing highlight or restore original color for a single pad on the controller."""
+        if not self.current_controller or not self.current_controller.set_pad_color:
+            return
+        if not self.midi_handler or not self.midi_handler.controller_out:
+            return
+
+        coord = (logical_x, logical_y)
+        if note_on:
+            rgb = self._PLAYING_RGB
+            c = {'red': rgb[0], 'green': rgb[1], 'blue': rgb[2],
+                 'color': self._rgb_to_controller_enum(rgb)}
+        else:
+            c = self._pad_device_colors.get(coord)
+            if not c:
+                return
+
+        try:
+            from .midi_setup import MIDITemplateBuilder
+            builder = MIDITemplateBuilder(self.current_controller)
+            midi_bytes = builder.set_pad_color(
+                logical_x, logical_y,
+                c['red'], c['green'], c['blue'],
+                c['color']
+            )
+            if midi_bytes:
+                self.midi_handler.send_raw_bytes(midi_bytes, delay_ms=0)
+        except Exception as e:
+            logger.error(f"Error sending playing color for pad ({logical_x},{logical_y}): {e}")
 
     def _hsl_to_rgb(self, hsl_string: str) -> tuple[int, int, int]:
         """

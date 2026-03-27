@@ -52,6 +52,7 @@ class LayoutCalculator(ABC):
 
     def __init__(self, config: LayoutConfig):
         self.config = config
+        self.mos_to_logical: Dict[Tuple[int, int], List[Tuple[int, int]]] = {}
 
     @abstractmethod
     def calculate_mapping(
@@ -90,3 +91,15 @@ class LayoutCalculator(ABC):
             List of unmapped coordinates
         """
         pass
+
+    def get_mos_coordinate(self, logical_x: int, logical_y: int) -> Optional[Tuple[int, int]]:
+        """Get the MOS lattice coordinate for a logical coordinate. Override in subclasses."""
+        return None
+
+    def build_mos_to_logical_mapping(self, logical_coords: List[Tuple[int, int]]) -> None:
+        """Build reverse mapping from MOS coordinates to logical coordinates."""
+        self.mos_to_logical = {}
+        for lx, ly in logical_coords:
+            mos = self.get_mos_coordinate(lx, ly)
+            if mos is not None:
+                self.mos_to_logical.setdefault(mos, []).append((lx, ly))

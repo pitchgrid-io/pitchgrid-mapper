@@ -741,7 +741,7 @@ wheels = [
 [[package]]
 name = "scalatrix"
 version = "1.0.0"
-source = { git = "https://github.com/peterjungx/scalatrix.git?rev=main#8e9e0ca4b93b5698c96979f21a1765b72e83c268" }
+source = { git = "https://github.com/peterjungx/scalatrix.git?rev=main#df75c8707c2413fa11dbc64441bc776cd7893b6e" }
 
 [[package]]
 name = "scipy"

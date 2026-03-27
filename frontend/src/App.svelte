@@ -230,6 +230,9 @@
       } else if (data.type === 'layout_update') {
         // Handle layout updates
         fetchStatus();
+      } else if (data.type === 'clear_all_notes') {
+        // Reset all playing note highlights (e.g., before layout recalculation)
+        activeNotes = new Set();
       } else if (data.type === 'note_event') {
         // Handle note on/off for pad highlighting
         const key = `${data.x},${data.y}`;

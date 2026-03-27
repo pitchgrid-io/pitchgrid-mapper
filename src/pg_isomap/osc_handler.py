@@ -51,6 +51,8 @@ class OSCHandler:
         self.on_mapping_update: Optional[Callable] = None
         self.on_note_mapping: Optional[Callable] = None
         self.on_connection_changed: Optional[Callable] = None
+        self.on_plugin_note_on: Optional[Callable] = None   # (mos_x, mos_y, velocity)
+        self.on_plugin_note_off: Optional[Callable] = None   # (mos_x, mos_y)
 
         # Current state
         self.current_scale_data = None
@@ -88,6 +90,8 @@ class OSCHandler:
         disp.map("/pitchgrid/scale", self._handle_scale_update)
         disp.map("/pitchgrid/notes", self._handle_note_mapping)
         disp.map("/pitchgrid/playing", self._handle_playing_notes)
+        disp.map("/pitchgrid/plugin/note_on", self._handle_plugin_note_on)
+        disp.map("/pitchgrid/plugin/note_off", self._handle_plugin_note_off)
         disp.set_default_handler(self._default_handler)
 
         # Create and start OSC server (for receiving from plugin)
@@ -246,6 +250,22 @@ class OSCHandler:
 
         if self.on_note_mapping:
             self.on_note_mapping(mapping_data)
+
+    def _handle_plugin_note_on(self, address: str, *args):
+        """Handle note_on forwarded from PitchGrid plugin (root coordinates)."""
+        if len(args) >= 3:
+            root_x, root_y, velocity = int(args[0]), int(args[1]), int(args[2])
+            logger.debug(f"Plugin note_on: root=({root_x},{root_y}) vel={velocity}")
+            if self.on_plugin_note_on:
+                self.on_plugin_note_on(root_x, root_y, velocity)
+
+    def _handle_plugin_note_off(self, address: str, *args):
+        """Handle note_off forwarded from PitchGrid plugin (root coordinates)."""
+        if len(args) >= 2:
+            root_x, root_y = int(args[0]), int(args[1])
+            logger.debug(f"Plugin note_off: root=({root_x},{root_y})")
+            if self.on_plugin_note_off:
+                self.on_plugin_note_off(root_x, root_y)
 
     def _handle_playing_notes(self, address: str, *args):
         """Handle currently playing notes (for visualization)."""

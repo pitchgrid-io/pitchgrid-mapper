@@ -311,6 +311,31 @@ class WebAPI:
         except Exception as e:
             logger.error(f"Error scheduling WebSocket broadcast: {e}")
 
+    def broadcast_clear_all_notes(self):
+        """Broadcast a clear-all-notes event to reset playing state in all UI clients."""
+        import asyncio
+
+        if not self.active_connections or self.event_loop is None:
+            return
+
+        message = {'type': 'clear_all_notes'}
+
+        async def send_to_all():
+            disconnected = []
+            for connection in self.active_connections[:]:
+                try:
+                    await connection.send_json(message)
+                except Exception:
+                    disconnected.append(connection)
+            for connection in disconnected:
+                if connection in self.active_connections:
+                    self.active_connections.remove(connection)
+
+        try:
+            asyncio.run_coroutine_threadsafe(send_to_all(), self.event_loop)
+        except Exception as e:
+            logger.error(f"Error scheduling clear_all_notes broadcast: {e}")
+
     def broadcast_note_event(self, logical_x: int, logical_y: int, note_on: bool):
         """
         Broadcast a note event to all WebSocket clients for UI highlighting.
