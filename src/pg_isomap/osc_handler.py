@@ -53,6 +53,7 @@ class OSCHandler:
         self.on_connection_changed: Optional[Callable] = None
         self.on_plugin_note_on: Optional[Callable] = None   # (mos_x, mos_y, velocity)
         self.on_plugin_note_off: Optional[Callable] = None   # (mos_x, mos_y)
+        self.on_spectrum: Optional[Callable] = None          # (partials: list[(ratio, weight)])
 
         # Current state
         self.current_scale_data = None
@@ -92,6 +93,7 @@ class OSCHandler:
         disp.map("/pitchgrid/playing", self._handle_playing_notes)
         disp.map("/pitchgrid/plugin/note_on", self._handle_plugin_note_on)
         disp.map("/pitchgrid/plugin/note_off", self._handle_plugin_note_off)
+        disp.map("/pitchgrid/plugin/spectrum", self._handle_plugin_spectrum)
         disp.set_default_handler(self._default_handler)
 
         # Create and start OSC server (for receiving from plugin)
@@ -266,6 +268,37 @@ class OSCHandler:
             logger.debug(f"Plugin note_off: root=({root_x},{root_y})")
             if self.on_plugin_note_off:
                 self.on_plugin_note_off(root_x, root_y)
+
+    def _handle_plugin_spectrum(self, address: str, *args):
+        """Handle spectrum forwarded from PitchGrid plugin.
+
+        Payload format (from plugin): int32 count (=len*2) then interleaved
+        float32 ratio, float32 weight pairs. The count prefix is sometimes
+        included, sometimes not — accept both.
+        """
+        self._last_plugin_heartbeat = time.time()
+
+        values = list(args)
+        # If the first arg is an int count, strip it.
+        if values and isinstance(values[0], int):
+            values = values[1:]
+
+        partials: list[tuple[float, float]] = []
+        for i in range(0, len(values) - 1, 2):
+            try:
+                ratio = float(values[i])
+                weight = float(values[i + 1])
+            except (TypeError, ValueError):
+                continue
+            if ratio > 0:
+                partials.append((ratio, weight))
+
+        logger.debug(f"Received spectrum: {len(partials)} partials")
+        if self.on_spectrum:
+            try:
+                self.on_spectrum(partials)
+            except Exception as e:
+                logger.error(f"Error in on_spectrum callback: {e}")
 
     def _handle_playing_notes(self, address: str, *args):
         """Handle currently playing notes (for visualization)."""

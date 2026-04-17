@@ -31,6 +31,11 @@ class SetDynamicOptionRequest(BaseModel):
     value: Any
 
 
+class SetColorSchemeRequest(BaseModel):
+    """Request to set the active color scheme."""
+    scheme: str
+
+
 class LayoutConfigUpdate(BaseModel):
     """Layout configuration update."""
     layout_type: LayoutType
@@ -121,6 +126,9 @@ class WebAPI:
             # Load the configuration
             self.app.current_controller = config
 
+            # Load persisted color scheme (falls back to scale for palette-only controllers)
+            self.app._load_color_scheme()
+
             # Load dynamic option values (saved prefs merged with YAML defaults)
             self.app._load_dynamic_option_values()
 
@@ -138,6 +146,12 @@ class WebAPI:
             """Set a dynamic UI option value and resend setup commands."""
             success = self.app.set_dynamic_option(request.name, request.value)
             return {'success': success}
+
+        @self.fastapi.post("/api/color_scheme")
+        async def set_color_scheme(request: SetColorSchemeRequest):
+            """Select a coloring scheme for the current controller."""
+            success = self.app.set_color_scheme(request.scheme)
+            return {'success': success, 'color_scheme': self.app._color_scheme}
 
         @self.fastapi.get("/api/layout")
         async def get_layout():

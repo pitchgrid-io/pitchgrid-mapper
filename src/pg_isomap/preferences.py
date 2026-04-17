@@ -8,7 +8,7 @@ keyed by controller device name.
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -47,4 +47,19 @@ class ControllerPreferences:
         if controller_name not in self._data:
             self._data[controller_name] = {}
         self._data[controller_name][option_name] = value
+        self._save()
+
+    # Color scheme is stored under a reserved key to keep it separate from
+    # dynamic UI options coming from YAML configs.
+    _COLOR_SCHEME_KEY = "__color_scheme__"
+
+    def get_color_scheme(self, controller_name: str) -> Optional[str]:
+        """Get the saved color scheme name for a controller, or None if unset."""
+        return self._data.get(controller_name, {}).get(self._COLOR_SCHEME_KEY)
+
+    def set_color_scheme(self, controller_name: str, scheme: str):
+        """Persist the color scheme for a controller."""
+        if controller_name not in self._data:
+            self._data[controller_name] = {}
+        self._data[controller_name][self._COLOR_SCHEME_KEY] = scheme
         self._save()

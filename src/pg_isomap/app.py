@@ -11,7 +11,16 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from .coloring import DEFAULT_COLORING_SCHEME
+from .coloring import (
+    AVAILABLE_SCHEMES,
+    DEFAULT_COLORING_SCHEME,
+    DEFAULT_HARMONY_SCHEME,
+    DEFAULT_RAINBOW_SCHEME,
+    SCHEME_HARMONY,
+    SCHEME_RAINBOW,
+    SCHEME_SCALE,
+    SpectrumConsonance,
+)
 from .config import settings
 from .controller_config import ControllerConfig, ControllerManager
 from .layouts import (
@@ -70,6 +79,17 @@ class PGIsomapApp:
         # Maps (logical_x, logical_y) -> {'red', 'green', 'blue', 'color'}
         self._pad_device_colors: dict[tuple[int, int], dict] = {}
 
+        # Coloring scheme state
+        self._color_scheme: str = SCHEME_SCALE
+        self._spectrum_consonance = SpectrumConsonance()
+        self._last_partials: list[tuple[float, float]] = []
+
+        # Throttle for spectrum-driven recoloring (seconds between resends)
+        self._spectrum_refresh_interval: float = 0.2  # 5Hz
+        self._spectrum_last_applied: float = 0.0
+        self._spectrum_pending_timer: Optional[threading.Timer] = None
+        self._spectrum_lock = threading.Lock()
+
         # Setup callbacks
         self.osc_handler.on_scale_update = self._handle_scale_update
         self.osc_handler.on_mapping_update = self._handle_mapping_update
@@ -77,6 +97,7 @@ class PGIsomapApp:
         self.osc_handler.on_connection_changed = self._handle_osc_connection_changed
         self.osc_handler.on_plugin_note_on = self._handle_plugin_note_on
         self.osc_handler.on_plugin_note_off = self._handle_plugin_note_off
+        self.osc_handler.on_spectrum = self._handle_spectrum_update
         self.midi_handler.get_scale_coord = self._get_scale_coordinate
         self.midi_handler.on_note_event = self._handle_note_event
 
@@ -237,6 +258,7 @@ class PGIsomapApp:
         kb_config = self.controller_manager.get_config("Computer Keyboard")
         if kb_config:
             self.current_controller = kb_config
+            self._load_color_scheme()
             self._recalculate_layout()
             logger.info("Computer keyboard config loaded")
 
@@ -271,6 +293,9 @@ class PGIsomapApp:
         # Update current controller
         self.current_controller = config
 
+        # Load persisted color scheme (falls back to scale for palette-only controllers)
+        self._load_color_scheme()
+
         # Load dynamic option values (saved prefs merged with YAML defaults)
         self._load_dynamic_option_values()
 
@@ -296,6 +321,22 @@ class PGIsomapApp:
         self.midi_handler.disconnect_controller()
         self.current_controller = None
         logger.info("Controller disconnected")
+
+    def _load_color_scheme(self):
+        """Load saved color scheme for current controller, or reset to default.
+
+        Falls back to the scale scheme if the current controller doesn't
+        support RGB (e.g. LinnStrument palette-only).
+        """
+        if not self.current_controller:
+            self._color_scheme = SCHEME_SCALE
+            return
+
+        saved = self.preferences.get_color_scheme(self.current_controller.device_name)
+        if saved in AVAILABLE_SCHEMES and (saved == SCHEME_SCALE or self._controller_supports_rgb()):
+            self._color_scheme = saved
+        else:
+            self._color_scheme = SCHEME_SCALE
 
     def _load_dynamic_option_values(self):
         """Load dynamic option values for current controller from preferences, filling defaults."""
@@ -514,12 +555,37 @@ class PGIsomapApp:
     def _handle_scale_update(self, scale_data: dict):
         """Handle tuning update from PitchGrid plugin (/pitchgrid/plugin/tuning).
 
-        This receives the current live tuning params, which may differ from
-        mapping params when mapping is locked. Currently stored for future use
-        (e.g., display, audio features). Layout recalculation is driven by
-        _handle_mapping_update instead.
+        Live tuning params may diverge from mapping params when the plugin's
+        mapping is locked. These are used by the harmony-based coloring (which
+        depends on the actually-sounding intervals), not by layout.
         """
-        logger.debug("Received tuning update from PitchGrid (stored, no layout recalc)")
+        args = scale_data.get('args', [])
+        if len(args) < 8:
+            logger.debug(f"Ignoring short tuning payload: {args}")
+            return
+
+        mode, root_freq, stretch, skew, mode_offset, steps, mos_a, mos_b = args[:8]
+        root_changed = self.tuning_handler.update_live_tuning(
+            mode=mode,
+            root_freq=root_freq,
+            stretch=stretch,
+            skew=skew,
+            mode_offset=mode_offset,
+            steps=steps,
+            mos_a=mos_a,
+            mos_b=mos_b,
+        )
+
+        # Root frequency change invalidates the consonance curve — recompute
+        # from cached spectrum if we have one.
+        if root_changed and self._last_partials and self.tuning_handler.live_root_freq > 0:
+            self._spectrum_consonance.update(
+                self._last_partials, self.tuning_handler.live_root_freq
+            )
+
+        # Any live tuning change can shift pad cents → refresh harmony colors
+        if self._color_scheme == SCHEME_HARMONY:
+            self._schedule_spectrum_refresh()
 
     def _handle_mapping_update(self, mapping_data: dict):
         """Handle mapping update from PitchGrid plugin (/pitchgrid/plugin/mapping).
@@ -551,7 +617,8 @@ class PGIsomapApp:
                 mos_b=mos_b
             )
 
-            # Recalculate layout with new mapping
+            # Recalculate layout with new mapping. (Consonance curve tracks
+            # live-tuning root in _handle_scale_update, not the mapping root.)
             self._recalculate_layout()
 
         else:
@@ -563,6 +630,176 @@ class PGIsomapApp:
 
         # Parse and apply note mapping
         # TODO: Implement based on actual PitchGrid OSC format
+
+    def _handle_spectrum_update(self, partials: list):
+        """Handle incoming spectrum from PitchGrid plugin.
+
+        Recomputes the consonance curve at the current root frequency and
+        triggers a throttled color re-send if the harmony scheme is active.
+        """
+        if not partials:
+            return
+
+        with self._spectrum_lock:
+            self._last_partials = list(partials)
+
+        # Harmony coloring uses the *live* tuning (may differ from mapping
+        # when the plugin's mapping is locked). Fall back to mapping root if
+        # no live tuning has been received yet.
+        root_freq = self.tuning_handler.live_root_freq
+        if root_freq <= 0:
+            root_freq = self.tuning_handler.root_freq
+        if root_freq <= 0:
+            return
+
+        # Recompute consonance curve (runs off OSC server thread)
+        if not self._spectrum_consonance.update(partials, root_freq):
+            return
+
+        # Only re-push colors/UI when the harmony scheme is actually active
+        if self._color_scheme != SCHEME_HARMONY:
+            return
+
+        self._schedule_spectrum_refresh()
+
+    def _schedule_spectrum_refresh(self):
+        """Throttle spectrum-driven color refresh to at most once per interval."""
+        with self._spectrum_lock:
+            now = time.time()
+            elapsed = now - self._spectrum_last_applied
+            if elapsed >= self._spectrum_refresh_interval:
+                self._spectrum_last_applied = now
+                if self._spectrum_pending_timer:
+                    self._spectrum_pending_timer.cancel()
+                    self._spectrum_pending_timer = None
+                threading.Thread(
+                    target=self._apply_spectrum_refresh,
+                    daemon=True,
+                    name="Harmony-Refresh",
+                ).start()
+                return
+
+            # Otherwise schedule a single trailing refresh
+            if self._spectrum_pending_timer is not None:
+                return
+            delay = self._spectrum_refresh_interval - elapsed
+            t = threading.Timer(delay, self._apply_spectrum_refresh_trailing)
+            t.daemon = True
+            t.name = "Harmony-RefreshTimer"
+            self._spectrum_pending_timer = t
+            t.start()
+
+    def _apply_spectrum_refresh_trailing(self):
+        with self._spectrum_lock:
+            self._spectrum_pending_timer = None
+            self._spectrum_last_applied = time.time()
+        self._apply_spectrum_refresh()
+
+    def _apply_spectrum_refresh(self):
+        """Push updated colors to device and UI."""
+        if self._color_scheme != SCHEME_HARMONY:
+            return
+        self._send_pad_colors_async()
+        if self.web_api:
+            self.web_api.broadcast_status_update()
+
+    def set_color_scheme(self, scheme: str) -> bool:
+        """Select a coloring scheme and re-render pad colors."""
+        if scheme not in AVAILABLE_SCHEMES:
+            logger.warning(f"Unknown color scheme: {scheme}")
+            return False
+
+        # Palette-only controllers can't display the RGB schemes meaningfully
+        if scheme != SCHEME_SCALE and not self._controller_supports_rgb():
+            logger.warning(f"Controller does not support RGB scheme '{scheme}'")
+            return False
+
+        if scheme == self._color_scheme:
+            return True
+
+        self._color_scheme = scheme
+
+        if self.current_controller:
+            self.preferences.set_color_scheme(self.current_controller.device_name, scheme)
+
+        # If harmony was selected but spectrum is stale or missing, try to
+        # recompute from the last seen partials.
+        if scheme == SCHEME_HARMONY and self._last_partials:
+            root = self.tuning_handler.live_root_freq or self.tuning_handler.root_freq
+            if root > 0:
+                self._spectrum_consonance.update(self._last_partials, root)
+
+        self._send_pad_colors_async()
+        if self.web_api:
+            self.web_api.broadcast_status_update()
+        return True
+
+    def _controller_supports_rgb(self) -> bool:
+        """True if the current controller can display continuous RGB colors.
+
+        Palette-only controllers (e.g. LinnStrument) define a color enum and
+        can't reproduce the Rainbow/Harmony palettes faithfully. Controllers
+        with no color output (e.g. Computer Keyboard) are still allowed — the
+        new schemes can still drive the UI canvas.
+        """
+        c = self.current_controller
+        if c is None:
+            return True
+        return c.color_enum_to_rgb is None
+
+    def _mapping_to_tuning_coord(self, mapping_coord, tuning_mos):
+        """Convert a mapping-MOS coordinate to the equivalent tuning-MOS coordinate.
+
+        Goes via the shared (1,1) root lattice: mapping_coord → root → tuning_coord.
+        If either MOS is missing or the tuning MOS is the same object as the
+        mapping MOS, returns the mapping coord unchanged.
+        """
+        if mapping_coord is None or tuning_mos is None:
+            return mapping_coord
+        mapping_mos = self.tuning_handler.mos
+        if mapping_mos is None or tuning_mos is mapping_mos:
+            return mapping_coord
+        try:
+            root = mapping_mos.toRootCoord(sx.Vector2i(mapping_coord[0], mapping_coord[1]))
+            tv = tuning_mos.fromRootCoord(root)
+            return (tv.x, tv.y)
+        except Exception as e:
+            logger.debug(f"mapping→tuning coord conversion failed for {mapping_coord}: {e}")
+            return mapping_coord
+
+    def _get_pad_color(
+        self,
+        mos_coord,
+        use_dark_offscale: bool = False,
+    ) -> Optional[str]:
+        """Dispatch pad color through the active coloring scheme."""
+        scheme = self._color_scheme
+        # Fall back to scale scheme if the current controller has no RGB support
+        if scheme != SCHEME_SCALE and not self._controller_supports_rgb():
+            scheme = SCHEME_SCALE
+
+        if scheme == SCHEME_RAINBOW:
+            return DEFAULT_RAINBOW_SCHEME.get_color(
+                mos_coord=mos_coord,
+                mos=self.tuning_handler.mos,
+            )
+
+        if scheme == SCHEME_HARMONY:
+            tuning_mos = self.tuning_handler.live_mos or self.tuning_handler.mos
+            tuning_coord = self._mapping_to_tuning_coord(mos_coord, tuning_mos)
+            return DEFAULT_HARMONY_SCHEME.get_color(
+                tuning_coord=tuning_coord,
+                tuning_mos=tuning_mos,
+                spectrum_consonance=self._spectrum_consonance,
+            )
+
+        return DEFAULT_COLORING_SCHEME.get_color(
+            mos_coord=mos_coord,
+            mos=self.tuning_handler.mos,
+            coord_to_scale_index=self.tuning_handler.coord_to_scale_index,
+            supermos=None,
+            use_dark_offscale=use_dark_offscale,
+        )
 
     def _handle_osc_connection_changed(self, connected: bool):
         """Handle OSC connection state change."""
@@ -696,13 +933,10 @@ class PGIsomapApp:
                     # Get MOS coordinate (returns enharmonic equivalent if applicable)
                     mos_coord = self.current_layout_calculator.get_mos_coordinate(x, y)
 
-                    # Use coloring scheme to determine color (for UI display)
-                    color = DEFAULT_COLORING_SCHEME.get_color(
+                    # Dispatch through active coloring scheme (for UI display)
+                    color = self._get_pad_color(
                         mos_coord=mos_coord,
-                        mos=self.tuning_handler.mos,
-                        coord_to_scale_index=self.tuning_handler.coord_to_scale_index,
-                        supermos=None,
-                        use_dark_offscale=False
+                        use_dark_offscale=False,
                     )
                 elif mapped_note is not None:
                     # Fallback: simple hue based on note number
@@ -782,6 +1016,9 @@ class PGIsomapApp:
             },
             'platform': sys.platform,  # 'win32', 'darwin', 'linux'
             'dynamic_ui_options': dynamic_ui_options,
+            'color_scheme': self._color_scheme,
+            'available_color_schemes': list(AVAILABLE_SCHEMES),
+            'controller_supports_rgb': self._controller_supports_rgb(),
         }
 
     def _send_controller_setup(self):
@@ -910,12 +1147,9 @@ class PGIsomapApp:
             for pad in controller_pads:
                 # For device colors, recalculate with use_dark_offscale if needed
                 if use_dark_offscale and pad.get('mos_coord') and self.tuning_handler.mos:
-                    device_color = DEFAULT_COLORING_SCHEME.get_color(
+                    device_color = self._get_pad_color(
                         mos_coord=pad['mos_coord'],
-                        mos=self.tuning_handler.mos,
-                        coord_to_scale_index=self.tuning_handler.coord_to_scale_index,
-                        supermos=None,
-                        use_dark_offscale=True
+                        use_dark_offscale=True,
                     )
                     hsl_color = device_color if device_color else 'hsl(0, 0%, 0%)'
                 elif pad.get('color'):

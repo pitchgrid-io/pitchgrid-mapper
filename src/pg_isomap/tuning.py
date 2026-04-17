@@ -41,6 +41,20 @@ class TuningHandler:
         self.edo_mos: Optional[sx.MOS] = None
         self.enharmonic_vector: Optional[sx.Vector2i] = None
 
+        # Live tuning state (from /pitchgrid/plugin/tuning). Used for
+        # harmony-based coloring — diverges from mapping state when the
+        # plugin's mapping is locked. Falls back to mapping state when no
+        # live tuning has been received yet.
+        self.live_mos: Optional[sx.MOS] = None
+        self.live_root_freq: float = 0.0
+        self.live_mode: int = 0
+        self.live_stretch: float = 1.0
+        self.live_skew: float = 0.583333
+        self.live_mos_a: int = 5
+        self.live_mos_b: int = 2
+        self.live_steps: int = 12
+        self.live_mode_offset: int = 0
+
         # Initialize with default MOS (12-EDO chromatic)
         self._calculate_mos()
 
@@ -85,6 +99,49 @@ class TuningHandler:
 
         # Recalculate MOS and scale degrees
         self._calculate_mos()
+
+    def update_live_tuning(
+        self,
+        mode: int,
+        root_freq: float,
+        stretch: float,
+        skew: float,
+        mode_offset: int,
+        steps: int,
+        mos_a: int,
+        mos_b: int,
+    ) -> bool:
+        """Update the live-tuning MOS (used for harmony coloring).
+
+        Returns True if the root frequency changed (caller may want to refresh
+        consonance curve).
+        """
+        root_freq = float(root_freq)
+        old_root = self.live_root_freq
+
+        self.live_mode = int(mode)
+        self.live_root_freq = root_freq
+        self.live_stretch = float(stretch)
+        self.live_skew = float(skew)
+        self.live_mode_offset = int(mode_offset)
+        self.live_steps = max(1, int(steps))
+        self.live_mos_a = max(1, int(mos_a))
+        self.live_mos_b = max(1, int(mos_b))
+
+        try:
+            self.live_mos = sx.MOS.fromParams(
+                self.live_mos_a,
+                self.live_mos_b,
+                self.live_mode,
+                self.live_stretch,
+                self.live_skew,
+                1,
+            )
+        except Exception as e:
+            logger.error(f"Error building live-tuning MOS: {e}")
+            self.live_mos = None
+
+        return old_root != root_freq
 
     def _calculate_mos(self):
         """Calculate MOS from current tuning parameters."""

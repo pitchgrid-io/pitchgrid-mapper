@@ -58,7 +58,16 @@
     };
     platform: string;  // 'win32', 'darwin', 'linux'
     dynamic_ui_options: DynamicUIOption[];
+    color_scheme: string;
+    available_color_schemes: string[];
+    controller_supports_rgb: boolean;
   }
+
+  const COLOR_SCHEME_LABELS: Record<string, string> = {
+    scale: 'Scale',
+    rainbow: 'Rainbow',
+    harmony: 'Harmony',
+  };
 
   let ws: WebSocket | null = null;
   let status: AppStatus | null = null;
@@ -173,6 +182,30 @@
     } catch (error) {
       console.error('Error switching controller:', error);
     }
+  }
+
+  // Handle color scheme selection
+  async function handleColorSchemeSelection(event: Event) {
+    const target = event.target as HTMLSelectElement;
+    const scheme = target.value;
+    try {
+      const response = await fetch('/api/color_scheme', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scheme }),
+      });
+      const result = await response.json();
+      if (!result.success) {
+        console.warn('Failed to set color scheme:', scheme);
+      }
+    } catch (error) {
+      console.error('Error setting color scheme:', error);
+    }
+  }
+
+  function isSchemeAvailable(scheme: string, s: AppStatus | null): boolean {
+    if (scheme === 'scale') return true;
+    return !!s?.controller_supports_rgb;
   }
 
   // Handle layout type selection
@@ -490,6 +523,25 @@
           <option value="midi_note">MIDI Note</option>
           <option value="mos_coords">MOS Coordinates</option>
           <option value="device_coords">Device Coordinates</option>
+        </select>
+
+        <label for="color-scheme-select">Colors:</label>
+        <select
+          id="color-scheme-select"
+          value={status.color_scheme}
+          on:change={handleColorSchemeSelection}
+          title={status.controller_supports_rgb
+            ? 'Pad coloring scheme'
+            : 'This controller does not support RGB — only Scale is available'}
+        >
+          {#each (status.available_color_schemes ?? ['scale']) as scheme}
+            <option
+              value={scheme}
+              disabled={!isSchemeAvailable(scheme, status)}
+            >
+              {COLOR_SCHEME_LABELS[scheme] ?? scheme}{!isSchemeAvailable(scheme, status) ? ' (needs RGB)' : ''}
+            </option>
+          {/each}
         </select>
       </div>
 
