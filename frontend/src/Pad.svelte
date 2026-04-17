@@ -86,6 +86,13 @@
     onNoteOff();
   }
 
+  function handleMouseEnter(event: MouseEvent) {
+    // Send note-on when mouse enters the pad with left button held down
+    if (event.buttons & 1) {
+      onNoteOn();
+    }
+  }
+
   function handleMouseLeave(event: MouseEvent) {
     // Send note-off when mouse leaves the pad while pressed
     if (event.buttons > 0) {
@@ -99,6 +106,7 @@
 <g
   on:mousedown={handleMouseDown}
   on:mouseup={handleMouseUp}
+  on:mouseenter={handleMouseEnter}
   on:mouseleave={handleMouseLeave}
   class="pad"
   class:active={isActive}
