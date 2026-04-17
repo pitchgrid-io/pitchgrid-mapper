@@ -7,11 +7,26 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+
+def _version_from_pyproject():
+    """Read the project version from pyproject.toml (fallback when APP_VERSION
+    is not set in the environment)."""
+    try:
+        import tomllib  # Python 3.11+
+    except ImportError:
+        import tomli as tomllib  # type: ignore
+    pyproject = os.path.join(os.path.dirname(os.path.abspath(SPEC)), 'pyproject.toml')
+    with open(pyproject, 'rb') as f:
+        return tomllib.load(f)['project']['version']
+
+
 # Get configuration from environment
 codesign_identity = os.getenv('CODESIGN_IDENTITY', '')
 bundle_id = os.getenv('BUNDLE_ID', 'com.pitchgrid.isomap')
 app_name = os.getenv('APP_NAME', 'PGIsomap')
-app_version = os.getenv('APP_VERSION', '0.1.0')
+# Version: env var wins (set by build scripts from pyproject.toml), otherwise
+# read pyproject.toml directly so the manifest is the single source of truth.
+app_version = os.getenv('APP_VERSION') or _version_from_pyproject()
 
 # Get target architecture from environment or default to native
 target_arch = os.getenv('BUILD_ARCH', platform.machine())

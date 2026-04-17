@@ -26,16 +26,22 @@ if [ -z "$ARCH" ]; then
     ARCH="${BUILD_ARCH:-$(uname -m)}"
 fi
 
-# Load environment variables
+# Load environment variables (for secrets, Apple creds, etc.)
 if [ -f .env ]; then
     set -a  # automatically export all variables
     source .env
     set +a
 fi
 
+# Version is always derived from pyproject.toml — overriding any value that
+# may have leaked in from .env so the single source of truth is the project
+# manifest, not a local dotfile.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_VERSION="$("${SCRIPT_DIR}/scripts/get_version.sh")"
+export APP_VERSION
+
 # Get configuration from environment
 APP_NAME="${APP_NAME:-PitchGrid Mapper}"
-APP_VERSION="${APP_VERSION:-0.1.0}"
 APP_PATH="dist/${APP_NAME}.app"
 DMG_NAME="${APP_NAME// /-}"  # Replace spaces with dashes for DMG filename
 DMG_PATH="${DMG_NAME}-${APP_VERSION}-${ARCH}.dmg"

@@ -20,7 +20,12 @@ if (Test-Path .env) {
 }
 
 $AppName = if ($env:APP_NAME) { $env:APP_NAME } else { "PitchGrid Mapper" }
-$AppVersion = if ($env:APP_VERSION) { $env:APP_VERSION } else { "0.1.0" }
+
+# Version is always derived from pyproject.toml — overriding any value that
+# may have leaked in from .env so the single source of truth is the project
+# manifest, not a local dotfile.
+$AppVersion = & (Join-Path $PSScriptRoot 'scripts\Get-AppVersion.ps1')
+$env:APP_VERSION = $AppVersion
 
 Write-Host "App: $AppName"
 Write-Host "Version: $AppVersion"

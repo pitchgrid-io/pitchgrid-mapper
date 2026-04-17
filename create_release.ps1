@@ -21,10 +21,13 @@ if (Test-Path ".env") {
 $AppName = $env:APP_NAME
 if (-not $AppName) { $AppName = "PitchGrid Mapper" }
 
+# Version is always derived from pyproject.toml unless explicitly passed in
+# as a parameter — overriding any value that may have leaked in from .env so
+# the single source of truth is the project manifest, not a local dotfile.
 if (-not $Version) {
-    $Version = $env:APP_VERSION
-    if (-not $Version) { $Version = "0.1.0" }
+    $Version = & (Join-Path $PSScriptRoot 'scripts\Get-AppVersion.ps1')
 }
+$env:APP_VERSION = $Version
 
 Write-Host "Creating GitHub release for $AppName v$Version..." -ForegroundColor Cyan
 

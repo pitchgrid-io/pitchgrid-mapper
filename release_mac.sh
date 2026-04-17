@@ -9,14 +9,19 @@ echo "  PitchGrid Mapper - macOS Full Release"
 echo "=========================================="
 echo ""
 
-# Load environment variables
+# Load environment variables (for secrets, Apple creds, etc.)
 if [ -f .env ]; then
     set -a
     source .env
     set +a
 fi
 
-VERSION="${APP_VERSION:-0.1.0}"
+# Version is always derived from pyproject.toml — overriding any value that
+# may have leaked in from .env so the single source of truth is the project
+# manifest, not a local dotfile.
+APP_VERSION="$(./scripts/get_version.sh)"
+export APP_VERSION
+VERSION="$APP_VERSION"
 echo "Version: ${VERSION}"
 echo ""
 

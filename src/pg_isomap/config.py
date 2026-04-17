@@ -20,13 +20,19 @@ def _get_base_path() -> Path:
 
 
 def _get_app_version() -> str:
-    """Get app version from environment or version file."""
-    # Check for environment variable first (set at build time or in .env)
+    """Get app version.
+
+    Priority:
+      1. APP_VERSION env var (explicit override, rarely used)
+      2. Frozen bundle: _version.txt baked in at build time
+      3. Dev run: pyproject.toml — the single source of truth for this repo
+      4. Fallback: "0.1.0"
+    """
     version = os.getenv('APP_VERSION')
     if version:
         return version
 
-    # If frozen (bundled app), try to read from version file created at build time
+    # Frozen bundle: use the version file written at build time
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
         version_file = Path(sys._MEIPASS) / '_version.txt'
         if version_file.exists():
@@ -34,6 +40,20 @@ def _get_app_version() -> str:
                 return version_file.read_text().strip()
             except Exception:
                 pass
+
+    # Dev run: read directly from pyproject.toml so nothing needs to stay in sync
+    try:
+        try:
+            import tomllib  # Python 3.11+
+        except ImportError:  # pragma: no cover
+            import tomli as tomllib  # type: ignore
+        pyproject = _get_base_path() / "pyproject.toml"
+        if pyproject.exists():
+            with open(pyproject, "rb") as f:
+                data = tomllib.load(f)
+            return data.get("project", {}).get("version", "0.1.0")
+    except Exception:
+        pass
 
     return "0.1.0"  # Fallback default
 

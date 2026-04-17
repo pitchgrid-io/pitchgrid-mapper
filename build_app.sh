@@ -31,12 +31,19 @@ if [[ "$ARCH" != "arm64" && "$ARCH" != "x86_64" ]]; then
     exit 1
 fi
 
-# Load environment variables
+# Load environment variables (for secrets, Apple creds, etc.)
 if [ -f .env ]; then
     set -a  # automatically export all variables
     source .env
     set +a
 fi
+
+# Version is always derived from pyproject.toml — overriding any value that
+# may have leaked in from .env so the single source of truth is the project
+# manifest, not a local dotfile.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_VERSION="$("${SCRIPT_DIR}/scripts/get_version.sh")"
+export APP_VERSION
 
 # Export ARCH for other scripts
 export BUILD_ARCH="$ARCH"
@@ -124,7 +131,7 @@ rm -rf build/ dist/
 
 # Create version file for runtime
 echo "📝 Creating version file..."
-echo "${APP_VERSION:-0.1.0}" > _version.txt
+echo "${APP_VERSION}" > _version.txt
 
 # Build the application
 # Note: target_arch is set in pg_isomap.spec via BUILD_ARCH environment variable
