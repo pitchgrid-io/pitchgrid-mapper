@@ -286,7 +286,7 @@ wheels = [
 
 [[package]]
 name = "pg-isomap"
-version = "0.2.2"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -741,7 +741,7 @@ wheels = [
 [[package]]
 name = "scalatrix"
 version = "1.0.0"
-source = { git = "https://github.com/peterjungx/scalatrix.git?rev=main#df75c8707c2413fa11dbc64441bc776cd7893b6e" }
+source = { git = "https://github.com/peterjungx/scalatrix.git?rev=main#09283ae7b6f6e2dd55156950f5a2e3c3e8a7f70f" }
 
 [[package]]
 name = "scipy"
