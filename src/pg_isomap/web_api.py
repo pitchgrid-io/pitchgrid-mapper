@@ -115,13 +115,23 @@ class WebAPI:
             This loads the controller's pad layout and geometry, but doesn't
             establish a MIDI connection. Useful for Computer Keyboard and for
             visualizing controllers that aren't physically connected.
+
+            For Wooting analog controllers (YAMLs with `wootingKeycodeMap`),
+            the call instead activates the native bridge.
             """
             config = self.app.controller_manager.get_config(request.device_name)
             if not config:
                 return {'success': False, 'error': f'Controller config not found: {request.device_name}'}
 
-            # Disconnect from any existing MIDI controller
+            # Wooting controllers go through the native bridge path.
+            if config.is_wooting():
+                ok = self.app.connect_to_controller(request.device_name)
+                return {'success': ok}
+
+            # Disconnect from any existing MIDI controller and tear down any
+            # active Wooting bridge from a prior selection.
             self.app.midi_handler.disconnect_controller()
+            self.app._stop_wooting_bridge()
 
             # Load the configuration
             self.app.current_controller = config
@@ -140,6 +150,27 @@ class WebAPI:
 
             logger.info(f"Switched to controller configuration: {request.device_name}")
             return {'success': True}
+
+        @self.fastapi.get("/api/wooting/profiles")
+        async def get_wooting_profiles():
+            """List available Wooting input profiles + currently active one."""
+            return {
+                'profiles': self.app.get_wooting_profiles(),
+                'active': self.app.get_wooting_status() and (
+                    self.app.get_wooting_status() or {}
+                ).get('active_profile'),
+                'bridge_active': self.app._wooting_bridge is not None,
+                'status': self.app.get_wooting_status(),
+            }
+
+        @self.fastapi.post("/api/wooting/profile")
+        async def set_wooting_profile(request: dict):
+            """Switch the active Wooting profile."""
+            name = request.get('name')
+            if not name:
+                return {'success': False, 'error': 'Missing "name"'}
+            ok = self.app.set_wooting_profile(name)
+            return {'success': ok}
 
         @self.fastapi.post("/api/controllers/set_option")
         async def set_dynamic_option(request: SetDynamicOptionRequest):

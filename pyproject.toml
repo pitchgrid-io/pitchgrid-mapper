@@ -20,6 +20,7 @@ dependencies = [
     "scipy>=1.12.0",
     "pywebview>=5.0.0",
     "scalatrix @ git+https://github.com/peterjungx/scalatrix.git@main",
+    "pg-wooting-bridge",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +54,9 @@ dev-dependencies = [
     "black>=24.0.0",
     "ruff>=0.1.0",
 ]
+
+[tool.uv.sources]
+pg-wooting-bridge = { path = "wooting_bridge", editable = true }
 
 [tool.black]
 line-length = 100

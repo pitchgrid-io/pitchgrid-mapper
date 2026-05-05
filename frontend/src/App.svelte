@@ -61,6 +61,19 @@
     color_scheme: string;
     available_color_schemes: string[];
     controller_supports_rgb: boolean;
+    wooting: WootingStatus | null;
+  }
+
+  interface WootingProfile {
+    name: string;
+    label: string;
+    description: string;
+  }
+
+  interface WootingStatus {
+    active: boolean;
+    profiles: WootingProfile[];
+    active_profile: string | null;
   }
 
   const COLOR_SCHEME_LABELS: Record<string, string> = {
@@ -206,6 +219,24 @@
   function isSchemeAvailable(scheme: string, s: AppStatus | null): boolean {
     if (scheme === 'scale') return true;
     return !!s?.controller_supports_rgb;
+  }
+
+  async function handleWootingProfileSelection(event: Event) {
+    const target = event.target as HTMLSelectElement;
+    const name = target.value;
+    try {
+      const response = await fetch('/api/wooting/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const result = await response.json();
+      if (!result.success) {
+        console.warn('Failed to set Wooting profile:', name);
+      }
+    } catch (error) {
+      console.error('Error setting Wooting profile:', error);
+    }
   }
 
   // Handle layout type selection
@@ -543,6 +574,22 @@
             </option>
           {/each}
         </select>
+
+        {#if status.wooting && status.wooting.profiles.length > 0}
+          <label for="wooting-profile-select">Profile:</label>
+          <select
+            id="wooting-profile-select"
+            value={status.wooting.active_profile ?? ''}
+            on:change={handleWootingProfileSelection}
+            title="Wooting input profile (velocity / aftertouch handling)"
+          >
+            {#each status.wooting.profiles as profile}
+              <option value={profile.name} title={profile.description}>
+                {profile.label}
+              </option>
+            {/each}
+          </select>
+        {/if}
       </div>
 
       <!-- Dynamic controller options (defined in YAML config) -->

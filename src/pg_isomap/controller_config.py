@@ -149,6 +149,36 @@ class ControllerConfig:
             coord = self.config['defaultIsoRootCoordinate']
             self.default_iso_root_coordinate = (coord[0], coord[1])
 
+        # Wooting analog bridge metadata. The presence of `wootingKeycodeMap`
+        # marks this controller as one driven by the native Wooting bridge
+        # rather than by a MIDI port — see `is_wooting()` below.
+        self.wooting_keycode_map: Dict[int, Tuple[int, int]] = {}
+        if 'wootingKeycodeMap' in self.config:
+            raw = self.config['wootingKeycodeMap']
+            if isinstance(raw, dict):
+                for k, v in raw.items():
+                    self.wooting_keycode_map[int(k)] = (int(v[0]), int(v[1]))
+        self.wooting_rgb_address_map: Dict[Tuple[int, int], Tuple[int, int]] = {}
+        if 'wootingRgbAddressMap' in self.config:
+            raw = self.config['wootingRgbAddressMap']
+            # Accept a list of {x, y, row, col} entries (preferred — YAML
+            # cannot hash list keys) or a dict of "x,y" string keys.
+            if isinstance(raw, list):
+                for entry in raw:
+                    self.wooting_rgb_address_map[
+                        (int(entry['x']), int(entry['y']))
+                    ] = (int(entry['row']), int(entry['col']))
+            elif isinstance(raw, dict):
+                for k, v in raw.items():
+                    if isinstance(k, str) and ',' in k:
+                        sx_, sy_ = k.split(',', 1)
+                        self.wooting_rgb_address_map[
+                            (int(sx_.strip()), int(sy_.strip()))
+                        ] = (int(v[0]), int(v[1]))
+        self.wooting_vendor_id: Optional[int] = self.config.get('wootingVendorId')
+        self.wooting_product_id: Optional[int] = self.config.get('wootingProductId')
+        self.wooting_device_label: Optional[str] = self.config.get('wootingDeviceLabel')
+
         # MIDI commands (templates)
         self.set_pad_note_and_channel: Optional[str] = self.config.get('SetPadNoteAndChannel')
         self.set_pad_color: Optional[str] = self.config.get('SetPadColor')
@@ -375,6 +405,25 @@ class ControllerConfig:
         except Exception as e:
             logger.error(f"Error calculating controller note for ({x}, {y}): {e}")
             return None
+
+    def is_wooting(self) -> bool:
+        """True if this YAML config drives the native Wooting analog bridge."""
+        return bool(self.wooting_keycode_map)
+
+    def build_wooting_keymap_for_bridge(self) -> Dict[int, Tuple[int, int, int]]:
+        """Build the (HID keycode -> (x, y, controller_note)) dict the bridge wants.
+
+        The third tuple element is the same controller MIDI note number any
+        non-Wooting MIDI controller would emit at this position, so the host's
+        reverse-mapping table picks up Wooting events identically.
+        """
+        out: Dict[int, Tuple[int, int, int]] = {}
+        for keycode, (lx, ly) in self.wooting_keycode_map.items():
+            note = self.logical_coord_to_controller_note(lx, ly)
+            if note is None:
+                continue
+            out[keycode] = (lx, ly, int(note) & 0x7F)
+        return out
 
     def logical_coord_to_controller_channel(self, x: int, y: int) -> int:
         """

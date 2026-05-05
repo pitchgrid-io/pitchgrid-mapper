@@ -85,3 +85,7 @@ _prototype_reference_main.py
 *.ico
 *.exe
 Installers/Windows/Output/
+
+# Rust build artifacts (Wooting bridge crate)
+wooting_bridge/target/
+wooting_bridge/uv.lock

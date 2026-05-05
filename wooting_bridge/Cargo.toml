@@ -1,0 +1,26 @@
+[package]
+name = "pg_wooting_bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Native bridge between Wooting analog keyboards and pitchgrid-mapper"
+license = "MIT"
+
+[lib]
+name = "pg_wooting_bridge"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py312"] }
+libloading = "0.8"
+parking_lot = "0.12"
+crossbeam-queue = "0.3"
+crossbeam-channel = "0.5"
+smallvec = "1.13"
+spin_sleep = "1.2"
+thiserror = "1"
+log = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

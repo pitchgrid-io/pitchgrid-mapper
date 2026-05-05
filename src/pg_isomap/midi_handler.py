@@ -274,6 +274,19 @@ class MIDIHandler:
         except queue.Full:
             logger.warning("MIDI message queue full, dropping message")
 
+    def inject_message(self, message: List[int], timestamp: Optional[float] = None) -> None:
+        """Push a synthesized MIDI message into the same input queue rtmidi feeds.
+
+        Used by non-MIDI input sources (e.g. the Wooting analog bridge) so the
+        rest of the pipeline (reverse mapping, scale-aware retuning, UI events)
+        works identically to a real MIDI controller.
+        """
+        ts = timestamp if timestamp is not None else time.time()
+        try:
+            self._message_queue.put_nowait((list(message), ts))
+        except queue.Full:
+            logger.warning("MIDI message queue full, dropping injected message")
+
     def update_note_mapping(
         self,
         mapping: Dict[Tuple[int, int], int],

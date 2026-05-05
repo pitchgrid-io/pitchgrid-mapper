@@ -87,6 +87,23 @@ class Settings(BaseSettings):
     controller_config_dir: Path = _get_base_path() / "controller_config"
     frontend_dist_dir: Optional[Path] = _get_base_path() / "frontend" / "dist"
 
+    # Wooting analog bridge
+    wooting_analog_dylib_path: Optional[Path] = Path("/usr/local/lib/libwooting_analog_sdk.dylib")
+    wooting_rgb_dylib_path: Optional[Path] = Path("/usr/local/lib/libwooting-rgb-sdk.dylib")
+    wooting_min_poll_interval_us: int = 125  # 8 kHz upper bound; firmware decides actual rate
+    wooting_velocity_arm_threshold: float = 0.15
+    wooting_velocity_trigger_threshold: float = 0.50
+    wooting_velocity_release_threshold: float = 0.30
+    wooting_velocity_off_threshold: float = 0.10
+    wooting_velocity_min_dt_ms: float = 2.0
+    wooting_velocity_max_dt_ms: float = 80.0
+    wooting_default_profile: str = "mpe"
+    wooting_aftertouch_enabled: bool = True
+    wooting_aftertouch_smooth_alpha: float = 0.30
+    wooting_aftertouch_min_interval_ms: float = 5.0
+    wooting_rgb_refresh_hz: float = 30.0
+    wooting_drain_interval_ms: float = 2.0  # Python-side drain cadence (~500 Hz)
+
     model_config = SettingsConfigDict(
         env_prefix="PGISOMAP_",
         env_file=".env",

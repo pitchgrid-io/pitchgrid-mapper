@@ -35,6 +35,7 @@ from .midi_handler import MIDIHandler
 from .osc_handler import OSCHandler
 from .preferences import ControllerPreferences
 from .tuning import TuningHandler
+from .wooting import WootingBridge, WootingNotAvailable
 
 import scalatrix as sx
 
@@ -78,6 +79,9 @@ class PGIsomapApp:
         # Cached per-pad device color data for restoring after note-off
         # Maps (logical_x, logical_y) -> {'red', 'green', 'blue', 'color'}
         self._pad_device_colors: dict[tuple[int, int], dict] = {}
+
+        # Wooting analog bridge (active only when current_controller.is_wooting()).
+        self._wooting_bridge: Optional[WootingBridge] = None
 
         # Coloring scheme state
         self._color_scheme: str = SCHEME_SCALE
@@ -132,6 +136,9 @@ class PGIsomapApp:
 
         # Stop discovery
         self._stop_discovery()
+
+        # Stop Wooting bridge if active
+        self._stop_wooting_bridge()
 
         # Stop components
         self.midi_handler.shutdown()
@@ -278,10 +285,18 @@ class PGIsomapApp:
             logger.error(f"No configuration found for {device_name}")
             return False
 
+        # Wooting analog controllers are driven by the native bridge instead
+        # of a MIDI port. Take that path before the MIDI port checks.
+        if config.is_wooting():
+            return self._activate_wooting_controller(config)
+
         # Check if this controller has MIDI ports
         if not config.controller_midi_output:
             logger.warning(f"Controller {device_name} has no MIDI output port configured")
             return False
+
+        # Stop any active Wooting bridge from a prior controller selection.
+        self._stop_wooting_bridge()
 
         # Try to connect using separate input/output ports
         if not self.midi_handler.connect_to_controller(
@@ -319,8 +334,86 @@ class PGIsomapApp:
         # Cancel any ongoing color send before disconnecting
         self.midi_handler.cancel_color_send()
         self.midi_handler.disconnect_controller()
+        self._stop_wooting_bridge()
         self.current_controller = None
         logger.info("Controller disconnected")
+
+    def _activate_wooting_controller(self, config: ControllerConfig) -> bool:
+        """Activate a Wooting controller via the native bridge.
+
+        Mirrors the MIDI-controller activation flow: tears down any prior
+        bridge, sets `current_controller`, loads color scheme + dynamic
+        options, recalculates the layout (which triggers
+        `_send_pad_colors_async` → bridge color push), then starts the bridge
+        polling thread.
+        """
+        # Stop any prior bridge or MIDI controller connection.
+        self._stop_wooting_bridge()
+        self.midi_handler.disconnect_controller()
+
+        # Build the bridge first so a missing dylib / plugin surfaces before
+        # we mutate app state.
+        try:
+            bridge = WootingBridge(self.midi_handler, config)
+        except WootingNotAvailable as exc:
+            logger.warning("Wooting bridge unavailable: %s", exc)
+            return False
+        except Exception as exc:
+            logger.error("Failed to construct Wooting bridge: %s", exc, exc_info=True)
+            return False
+
+        self._wooting_bridge = bridge
+        self.current_controller = config
+        self._load_color_scheme()
+        self._load_dynamic_option_values()
+        self.current_layout_calculator = None
+        self._recalculate_layout()
+
+        try:
+            bridge.start()
+        except Exception as exc:
+            logger.error("Failed to start Wooting bridge: %s", exc, exc_info=True)
+            self._wooting_bridge = None
+            return False
+
+        logger.info("Wooting bridge active for %s", config.device_name)
+        return True
+
+    def _stop_wooting_bridge(self):
+        if self._wooting_bridge is not None:
+            try:
+                self._wooting_bridge.stop()
+            except Exception as exc:
+                logger.error("Error stopping Wooting bridge: %s", exc)
+            self._wooting_bridge = None
+
+    def set_wooting_profile(self, name: str) -> bool:
+        """Switch the active Wooting profile (e.g. 'mpe' / 'piano_sim')."""
+        if self._wooting_bridge is None:
+            return False
+        try:
+            self._wooting_bridge.set_profile(name)
+            return True
+        except Exception as exc:
+            logger.error("Failed to set Wooting profile %s: %s", name, exc)
+            return False
+
+    def get_wooting_profiles(self) -> list[dict]:
+        """Available profile metadata; empty if the native module isn't loaded."""
+        try:
+            from .wooting import WootingBridge as _WB  # noqa: F401
+            import pg_wooting_bridge  # type: ignore
+            return list(pg_wooting_bridge.available_profiles())
+        except Exception:
+            return []
+
+    def get_wooting_status(self) -> Optional[dict]:
+        if self._wooting_bridge is None:
+            return None
+        try:
+            return self._wooting_bridge.status()
+        except Exception:
+            return None
 
     def _load_color_scheme(self):
         """Load saved color scheme for current controller, or reset to default.
@@ -740,10 +833,13 @@ class PGIsomapApp:
         Palette-only controllers (e.g. LinnStrument) define a color enum and
         can't reproduce the Rainbow/Harmony palettes faithfully. Controllers
         with no color output (e.g. Computer Keyboard) are still allowed — the
-        new schemes can still drive the UI canvas.
+        new schemes can still drive the UI canvas. Wooting analog keyboards
+        get full RGB through the native bridge.
         """
         c = self.current_controller
         if c is None:
+            return True
+        if c.is_wooting():
             return True
         return c.color_enum_to_rgb is None
 
@@ -1024,6 +1120,21 @@ class PGIsomapApp:
             'color_scheme': self._color_scheme,
             'available_color_schemes': list(AVAILABLE_SCHEMES),
             'controller_supports_rgb': self._controller_supports_rgb(),
+            'wooting': self._build_wooting_status_payload(),
+        }
+
+    def _build_wooting_status_payload(self) -> Optional[dict]:
+        """Status block for Wooting controllers, or None when none is active."""
+        if self._wooting_bridge is None:
+            return None
+        try:
+            active = self._wooting_bridge.active_profile()
+        except Exception:
+            active = None
+        return {
+            'active': True,
+            'profiles': self.get_wooting_profiles(),
+            'active_profile': active,
         }
 
     def _send_controller_setup(self):
@@ -1115,6 +1226,11 @@ class PGIsomapApp:
         """Worker method that sends pad colors (runs in background thread)."""
         if not self.current_controller or not self.midi_handler:
             logger.debug("_send_pad_colors: No controller or midi_handler")
+            return
+
+        # Wooting bridge has its own RGB path (native, not MIDI templates).
+        if self.current_controller.is_wooting() and self._wooting_bridge is not None:
+            self._send_pad_colors_to_wooting()
             return
 
         # Only send if we have color templates
@@ -1217,12 +1333,70 @@ class PGIsomapApp:
         except Exception as e:
             logger.error(f"Error sending pad colors: {e}", exc_info=True)
 
+    def _send_pad_colors_to_wooting(self):
+        """Push the current per-pad RGB layer to the active Wooting bridge.
+
+        Only pads that have an RGB address mapping are forwarded — anything
+        outside the keyboard's addressable matrix is silently skipped.
+        """
+        bridge = self._wooting_bridge
+        if bridge is None or self.current_controller is None:
+            return
+        addr_map = self.current_controller.wooting_rgb_address_map
+        try:
+            status = self.get_status()
+            controller_pads = status.get('controller_pads', [])
+            use_dark_offscale = (
+                self.current_layout_config.layout_type == LayoutType.STRING_LIKE
+                or (
+                    self.current_layout_config.layout_type == LayoutType.ISOMORPHIC
+                    and self.tuning_handler.is_edo_compatible
+                )
+            )
+            colors: list[tuple[int, int, int, int, int]] = []
+            cache: dict[tuple[int, int], dict] = {}
+            for pad in controller_pads:
+                coord = (pad['x'], pad['y'])
+                if addr_map and coord not in addr_map:
+                    continue
+                if use_dark_offscale and pad.get('mos_coord') and self.tuning_handler.mos:
+                    hsl = self._get_pad_color(
+                        mos_coord=pad['mos_coord'], use_dark_offscale=True
+                    ) or 'hsl(0, 0%, 0%)'
+                else:
+                    hsl = pad.get('color') or 'hsl(0, 0%, 0%)'
+                r, g, b = self._hsl_to_rgb(hsl)
+                colors.append((coord[0], coord[1], r, g, b))
+                cache[coord] = {
+                    'red': r, 'green': g, 'blue': b, 'color': self._rgb_to_controller_enum((r, g, b))
+                }
+            bridge.set_pad_colors(colors)
+            self._pad_device_colors = cache
+        except Exception as exc:
+            logger.error("Error pushing colors to Wooting bridge: %s", exc, exc_info=True)
+
     # Playing highlight color (red, matching UI active note color)
     _PLAYING_RGB = (255, 0, 0)
 
     def _send_pad_playing_color(self, logical_x: int, logical_y: int, note_on: bool):
         """Send a playing highlight or restore original color for a single pad on the controller."""
-        if not self.current_controller or not self.current_controller.set_pad_color:
+        if not self.current_controller:
+            return
+
+        # Wooting bridge has its own overlay/clear path; this runs even when
+        # there's no MIDI controller_out (Wooting has none).
+        if self.current_controller.is_wooting() and self._wooting_bridge is not None:
+            try:
+                if note_on:
+                    r, g, b = self._PLAYING_RGB
+                    self._wooting_bridge.set_pad_overlay(logical_x, logical_y, r, g, b)
+                else:
+                    self._wooting_bridge.clear_pad_overlay(logical_x, logical_y)
+            except Exception as exc:
+                logger.error("Wooting overlay update failed: %s", exc)
+            return
+
+        if not self.current_controller.set_pad_color:
             return
         if not self.midi_handler or not self.midi_handler.controller_out:
             return
