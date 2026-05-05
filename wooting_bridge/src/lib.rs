@@ -157,6 +157,14 @@ impl Bridge {
             min_dt_ms: cfg_get_f32(config, "velocity_min_dt_ms", 2.0)?,
             max_dt_ms: cfg_get_f32(config, "velocity_max_dt_ms", 80.0)?,
         };
+        // Sustain state shared between the bridge poll thread and any
+        // active profile. master_sustain follows the spacebar pedal;
+        // per_note_sustain_enabled is the runtime switch (default off).
+        let master_sustain = Arc::new(AtomicBool::new(false));
+        let per_note_sustain_enabled = Arc::new(AtomicBool::new(
+            cfg_get_bool(config, "per_note_sustain_enabled", false)?,
+        ));
+
         let profile_config = ProfileConfig {
             velocity,
             channel_low: cfg_get_u32(config, "mpe_channel_low", 1)? as u8,
@@ -164,6 +172,8 @@ impl Bridge {
             aftertouch_enabled: cfg_get_bool(config, "aftertouch_enabled", true)?,
             aftertouch_smooth_alpha: cfg_get_f32(config, "aftertouch_smooth_alpha", 0.30)?,
             aftertouch_min_interval_ms: cfg_get_f32(config, "aftertouch_min_interval_ms", 5.0)?,
+            master_sustain: master_sustain.clone(),
+            per_note_sustain_enabled: per_note_sustain_enabled.clone(),
         };
         let default_profile = cfg_get_str(config, "default_profile", "mpe")?;
         let poll_us = cfg_get_u32(config, "min_poll_interval_us", 125)? as u64;
@@ -285,6 +295,25 @@ impl Bridge {
         self.inner.profile.lock().meta().name.to_string()
     }
 
+    /// Toggle the experimental per-note CC64 sustain. When enabled, the
+    /// piano-sim profile (and any future profile that opts in) emits
+    /// CC64=127 on the note's member channel at strike. The matching
+    /// CC64=0 on release is suppressed while the master pedal (spacebar)
+    /// is asserting sustain, so per-note state never fights the pedal.
+    fn set_per_note_sustain(&self, enabled: bool) {
+        self.inner
+            .profile_config
+            .per_note_sustain_enabled
+            .store(enabled, Ordering::Release);
+    }
+
+    fn per_note_sustain_enabled(&self) -> bool {
+        self.inner
+            .profile_config
+            .per_note_sustain_enabled
+            .load(Ordering::Acquire)
+    }
+
     fn set_pad_colors(&self, list: &Bound<'_, PyList>) -> PyResult<()> {
         let mut pc = self.inner.pad_colors.lock();
         pc.base.clear();
@@ -346,10 +375,33 @@ impl Bridge {
     }
 }
 
+/// HID Keyboard Usage code for spacebar — repurposed as a sustain pedal.
+const SPACEBAR_HID: u16 = 0x2C;
+/// Hysteresis thresholds for spacebar-as-sustain. Down at >0.5, lift at <0.3,
+/// matching the rough feel of a half-pedal release on a real damper pedal.
+const SUSTAIN_DOWN_THRESHOLD: f32 = 0.50;
+const SUSTAIN_UP_THRESHOLD: f32 = 0.30;
+/// Sustain CC and target channel. MPE-friendly: master/manager channel is
+/// channel 1 (0-indexed 0), so most synths receive the pedal globally.
+const CC_SUSTAIN: u8 = 0x40;
+const SUSTAIN_CHANNEL: u8 = 0;
+
+fn push_sustain(inner: &Arc<BridgeInner>, on: bool) {
+    inner
+        .profile_config
+        .master_sustain
+        .store(on, Ordering::Release);
+    let val: u8 = if on { 127 } else { 0 };
+    inner
+        .midi_outbox
+        .push(vec![0xB0 | (SUSTAIN_CHANNEL & 0x0F), CC_SUSTAIN, val]);
+}
+
 fn poll_thread_loop(inner: Arc<BridgeInner>) {
     let mut keycodes: Vec<u16> = vec![0; 128];
     let mut depths: Vec<f32> = vec![0.0; 128];
     let mut last_seen: HashMap<u16, f32> = HashMap::new();
+    let mut sustain_down = false;
 
     while inner.running.load(Ordering::Relaxed) {
         let next_deadline = Instant::now() + inner.poll_interval;
@@ -360,12 +412,28 @@ fn poll_thread_loop(inner: Arc<BridgeInner>) {
         };
         let now = Instant::now();
         let mut seen_this_tick: HashMap<u16, f32> = HashMap::new();
+        let mut spacebar_seen_this_tick = false;
 
         for i in 0..n {
             let kc = keycodes[i];
             let depth = depths[i];
             seen_this_tick.insert(kc, depth);
             last_seen.insert(kc, depth);
+
+            if kc == SPACEBAR_HID {
+                spacebar_seen_this_tick = true;
+                let new_down = if sustain_down {
+                    depth >= SUSTAIN_UP_THRESHOLD
+                } else {
+                    depth >= SUSTAIN_DOWN_THRESHOLD
+                };
+                if new_down != sustain_down {
+                    sustain_down = new_down;
+                    push_sustain(&inner, sustain_down);
+                }
+                continue;
+            }
+
             if let Some(key) = inner.keymap.lookup(kc) {
                 let mut prof = inner.profile.lock();
                 let batch = prof.process(key, kc, depth, now);
@@ -386,6 +454,13 @@ fn poll_thread_loop(inner: Arc<BridgeInner>) {
             .collect();
         for kc in stale {
             last_seen.insert(kc, 0.0);
+            if kc == SPACEBAR_HID {
+                if sustain_down && !spacebar_seen_this_tick {
+                    sustain_down = false;
+                    push_sustain(&inner, false);
+                }
+                continue;
+            }
             if let Some(key) = inner.keymap.lookup(kc) {
                 let mut prof = inner.profile.lock();
                 let batch = prof.process(key, kc, 0.0, now);
@@ -402,6 +477,12 @@ fn poll_thread_loop(inner: Arc<BridgeInner>) {
         if now < next_deadline {
             spin_sleep::sleep(next_deadline - now);
         }
+    }
+
+    // Lifting the bridge: if we exited with sustain still asserted, release
+    // it so downstream synths don't ring forever.
+    if sustain_down {
+        push_sustain(&inner, false);
     }
 }
 

@@ -169,6 +169,23 @@ impl KeyRecorder {
     /// dump (POST_SAMPLES samples written since the trigger). Snapshot is
     /// in chronological order, oldest first; trigger sits at index PRE_SAMPLES.
     fn push(&mut self, sample: Sample) -> Option<Vec<Sample>> {
+        // First push for this recorder: backfill the ring with synthetic
+        // "at rest" samples at 125 µs spacing, ending one tick before the
+        // first real sample. Without this, the pre-trigger window of an
+        // early press contains stale default-zero entries (t_us=0) and the
+        // CSV's 1s span is fictitious.
+        if self.samples_written == 0 {
+            const POLL_US: u64 = 1_000_000 / SAMPLE_RATE_HZ as u64;
+            for i in 1..TOTAL_SAMPLES {
+                let dt_us = (TOTAL_SAMPLES - i) as u64 * POLL_US;
+                self.ring[i] = Sample {
+                    t_us: sample.t_us.saturating_sub(dt_us),
+                    depth: 0.0,
+                };
+            }
+            // ring[0] is about to be overwritten by the real first sample.
+        }
+
         let crossed =
             self.last_depth < TRIGGER_THRESHOLD && sample.depth >= TRIGGER_THRESHOLD;
         let was_recording = self.trigger_global_idx.is_some();

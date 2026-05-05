@@ -36,6 +36,7 @@ from .osc_handler import OSCHandler
 from .preferences import ControllerPreferences
 from .tuning import TuningHandler
 from .wooting import WootingBridge, WootingNotAvailable
+from .wooting.usb_scan import pid_matches_base, scan as wooting_usb_scan
 
 import scalatrix as sx
 
@@ -82,6 +83,11 @@ class PGIsomapApp:
 
         # Wooting analog bridge (active only when current_controller.is_wooting()).
         self._wooting_bridge: Optional[WootingBridge] = None
+
+        # Cache of (vid, pid) pairs from the latest Wooting USB scan, refreshed
+        # by the discovery thread. Read by get_status() so the API surfaces the
+        # same "(available)" badge as MIDI controllers.
+        self._wooting_usb_pids: set[int] = set()
 
         # Coloring scheme state
         self._color_scheme: str = SCHEME_SCALE
@@ -203,9 +209,29 @@ class PGIsomapApp:
 
                 # Check what controllers are currently detected
                 current_detected = set()
+                # Wooting controllers: scan USB for devices that match each
+                # YAML's wootingProductId (with the +0/+1/+2 alt suffix
+                # masking the SDK uses). This is independent of MIDI ports.
+                wooting_pids = {
+                    pid for _vid, pid in wooting_usb_scan()
+                }
+                self._wooting_usb_pids = wooting_pids
                 for config_name in self.controller_manager.get_all_device_names():
                     config = self.controller_manager.get_config(config_name)
-                    if config and config.controller_midi_output:
+                    if not config:
+                        continue
+                    if config.is_wooting() and config.wooting_product_id is not None:
+                        if any(
+                            pid_matches_base(pid, int(config.wooting_product_id))
+                            for pid in wooting_pids
+                        ):
+                            current_detected.add(config_name)
+                            logger.debug(
+                                f"Matched {config_name} to USB Wooting device "
+                                f"(PID family 0x{config.wooting_product_id:04X})"
+                            )
+                        continue
+                    if config.controller_midi_output:
                         for port in available_ports:
                             if config.controller_midi_output.lower() in port.lower():
                                 current_detected.add(config_name)
@@ -1011,7 +1037,17 @@ class PGIsomapApp:
         detected_controllers = []
         for config_name in self.controller_manager.get_all_device_names():
             config = self.controller_manager.get_config(config_name)
-            if config and config.device_name != "Computer Keyboard" and config.controller_midi_output:
+            if not config or config.device_name == "Computer Keyboard":
+                continue
+            if config.is_wooting() and config.wooting_product_id is not None:
+                # Match against the cached USB scan (refreshed every discovery cycle).
+                if any(
+                    pid_matches_base(pid, int(config.wooting_product_id))
+                    for pid in self._wooting_usb_pids
+                ):
+                    detected_controllers.append(config_name)
+                continue
+            if config.controller_midi_output:
                 # Check if this controller's MIDI output port is available
                 for port in available_ports:
                     if config.controller_midi_output.lower() in port.lower():

@@ -1,0 +1,13 @@
+[project]
+name = "wooting-key-recorder-analysis"
+version = "0.1.0"
+description = "Jupyter analysis env for Wooting key-travel recordings"
+requires-python = ">=3.12"
+dependencies = [
+    "jupyter>=1.0.0",
+    "ipykernel>=6.29.0",
+    "matplotlib>=3.8.0",
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
+    "scipy>=1.12.0",
+]

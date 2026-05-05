@@ -87,4 +87,14 @@ directory into pandas DataFrames and provides:
 - Pre-trigger noise stats (mean / std / p95 / p99).
 - T_arm → T_trigger dt distribution (the metric our MPE velocity FSM uses).
 
-Run the recorder, capture some presses, then open the notebook.
+The notebook lives in its own uv project so its analysis deps (jupyter,
+pandas, matplotlib) don't clutter the main app's venv:
+
+```bash
+cd tools/key_recorder
+uv sync                          # one-time bootstrap of analysis venv
+uv run jupyter notebook analysis.ipynb
+```
+
+`TRACE_DIR` defaults to `/tmp/keyrecord` — adjust the first cell if you
+captured to a different path.

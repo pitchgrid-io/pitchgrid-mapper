@@ -139,10 +139,15 @@ impl VelocityFsm {
     fn compute_velocity(&self, dt_ms: f32) -> u8 {
         let cfg = &self.config;
         let clamped = dt_ms.clamp(cfg.min_dt_ms, cfg.max_dt_ms);
-        // Log-linear from min_dt -> 127 down to max_dt -> 1.
+        // Log-linear from min_dt -> ceiling down to max_dt -> 1.
+        // The ceiling is below 127 so MPE doesn't max out on every press —
+        // the dual-threshold metric saturates fast and crowds nearly all
+        // moderate-and-up presses into the top 10 % of the velocity range.
+        // Lowering the ceiling spreads them back out.
+        let ceiling: f32 = 95.0;
         let t = (clamped.ln() - cfg.min_dt_ms.ln())
             / (cfg.max_dt_ms.ln() - cfg.min_dt_ms.ln());
-        let v = 127.0 - t * 126.0;
+        let v = ceiling - t * (ceiling - 1.0);
         v.round().clamp(1.0, 127.0) as u8
     }
 }
@@ -164,7 +169,7 @@ mod tests {
         assert_eq!(fsm.update(0.20, t0 + Duration::from_millis(0)), VelocityEvent::None);
         let ev = fsm.update(0.55, t0 + Duration::from_millis(2));
         match ev {
-            VelocityEvent::NoteOn(v) => assert!(v >= 100, "fast press should be loud, got {}", v),
+            VelocityEvent::NoteOn(v) => assert!(v >= 90, "fast press should be loud, got {}", v),
             _ => panic!("expected NoteOn, got {:?}", ev),
         }
     }

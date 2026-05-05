@@ -151,6 +151,20 @@ class WootingBridge:
     def active_profile(self) -> str:
         return str(self._native_bridge.active_profile())
 
+    def set_per_note_sustain(self, enabled: bool) -> None:
+        """Toggle the experimental per-note CC64 sustain.
+
+        When enabled, profiles that opt in (currently PianoSim) emit
+        CC64=127 on the note's member channel at strike. The matching
+        CC64=0 on key release is suppressed while the master sustain
+        pedal (spacebar) is held, so per-note state never fights the
+        master pedal.
+        """
+        self._native_bridge.set_per_note_sustain(bool(enabled))
+
+    def per_note_sustain_enabled(self) -> bool:
+        return bool(self._native_bridge.per_note_sustain_enabled())
+
     def _drain_loop(self) -> None:
         interval = max(0.001, settings.wooting_drain_interval_ms / 1000.0)
         while self._drain_running:

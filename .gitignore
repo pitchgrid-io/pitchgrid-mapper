@@ -92,3 +92,7 @@ wooting_bridge/uv.lock
 
 # Rust build artifacts (tools)
 tools/*/target/
+
+
+# Jupyter scratch
+.ipynb_checkpoints/

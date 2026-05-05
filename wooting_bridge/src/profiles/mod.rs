@@ -1,7 +1,10 @@
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::time::Instant;
+
 use crate::channels::ChannelAllocator;
 use crate::midi::MidiBatch;
 use crate::velocity::VelocityConfig;
-use std::time::Instant;
 
 pub mod mpe;
 pub mod piano_sim;
@@ -27,6 +30,15 @@ pub struct ProfileConfig {
     pub aftertouch_enabled: bool,
     pub aftertouch_smooth_alpha: f32,
     pub aftertouch_min_interval_ms: f32,
+    /// Live master-sustain state, updated by the bridge poll thread when the
+    /// spacebar pedal flips. Profiles read this to decide whether their own
+    /// per-note sustain release should fire.
+    pub master_sustain: Arc<AtomicBool>,
+    /// Whether profiles should emit per-note CC64 messages on member
+    /// channels. When enabled, profiles emit CC64=127 on strike, but only
+    /// emit CC64=0 on release if master sustain is also off (so the
+    /// per-note signal never fights the master pedal).
+    pub per_note_sustain_enabled: Arc<AtomicBool>,
 }
 
 impl Default for ProfileConfig {
@@ -38,6 +50,8 @@ impl Default for ProfileConfig {
             aftertouch_enabled: true,
             aftertouch_smooth_alpha: 0.30,
             aftertouch_min_interval_ms: 5.0,
+            master_sustain: Arc::new(AtomicBool::new(false)),
+            per_note_sustain_enabled: Arc::new(AtomicBool::new(false)),
         }
     }
 }
