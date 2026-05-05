@@ -86,7 +86,7 @@ class TuningHandler:
         self.root_freq = float(root_freq)
         self.stretch = float(stretch)
         self.skew = float(skew)
-        self.mode_offset = int(mode_offset)
+        self.mode_offset = int(round(mode_offset))
         self.steps = max(1, int(steps))
         self.mos_a = max(1, int(mos_a))
         self.mos_b = max(1, int(mos_b))
@@ -123,7 +123,7 @@ class TuningHandler:
         self.live_root_freq = root_freq
         self.live_stretch = float(stretch)
         self.live_skew = float(skew)
-        self.live_mode_offset = int(mode_offset)
+        self.live_mode_offset = int(round(mode_offset))
         self.live_steps = max(1, int(steps))
         self.live_mos_a = max(1, int(mos_a))
         self.live_mos_b = max(1, int(mos_b))

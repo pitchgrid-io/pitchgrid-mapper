@@ -137,26 +137,22 @@ class ScaleColoringScheme(ColoringScheme):
 
 class RainbowColoringScheme(ColoringScheme):
     """
-    Color pads by accidental count.
+    Color pads by accidental deviation from the currently configured scale.
 
-    Accidental-free pads are white; positive accidentals walk outward from a
-    green/yellow midpoint toward blue/violet; negative accidentals walk toward
-    orange/red. Mode is ignored — the coloring is purely a function of the MOS
-    lattice coordinate.
+    For each pad, compare its absolute accidental against the accidental the
+    base scale assigns to that scale degree; the difference drives the hue.
+    Pads that match the scale render white; positive deviations walk outward
+    from a green/yellow anchor toward blue/violet, negative toward orange/red.
     """
 
     def __init__(
         self,
-        anchor_hue: float = 90.0,      # Midpoint between green (120) and yellow (60)
-        step_deg: float = 40.0,        # Hue step per accidental
-        max_abs_acc: int = 3,          # Clamp so positive/negative extremes stay apart
+        anchor_hue: float = 100.0,     # Shifted 10° from midpoint (90) toward green (120)
         saturation: float = 85.0,
         lightness: float = 55.0,
         white_color: str = "hsl(0, 0%, 95%)",
     ):
         self.anchor_hue = anchor_hue
-        self.step_deg = step_deg
-        self.max_abs_acc = max_abs_acc
         self.saturation = saturation
         self.lightness = lightness
         self.white_color = white_color
@@ -165,22 +161,37 @@ class RainbowColoringScheme(ColoringScheme):
         self,
         mos_coord: Optional[Tuple[int, int]],
         mos: Optional[sx.MOS],
+        steps: int,
+        is_mapped: bool = True,
     ) -> Optional[str]:
         if mos_coord is None or mos is None:
             return None
 
         try:
-            acc = mos.nodeAccidental(sx.Vector2i(mos_coord[0], mos_coord[1]))
+            v = sx.Vector2i(mos_coord[0], mos_coord[1])
+            pad_acc = mos.nodeAccidental(v)
+            sd = mos.nodeScaleDegree(v)
+            ref_node = mos.base_scale.getNodes()[sd]
+            ref_acc = mos.nodeAccidental(ref_node.natural_coord)
+            deviation = pad_acc - ref_acc
         except Exception as e:
-            logger.error(f"Error getting accidental for {mos_coord}: {e}")
+            logger.error(f"Error getting accidental deviation for {mos_coord}: {e}")
             return None
 
-        if acc == 0:
-            return self.white_color
+        dim = 0.2 if not is_mapped else 1.0
 
-        clamped = max(-self.max_abs_acc, min(self.max_abs_acc, acc))
-        hue = (self.anchor_hue + clamped * self.step_deg) % 360
-        return f"hsl({int(round(hue))}, {int(round(self.saturation))}%, {int(round(self.lightness))}%)"
+        if deviation == 0:
+            lightness = 95.0 * dim
+            return f"hsl(0, 0%, {int(round(lightness))}%)"
+
+        if steps <= 0 or mos.n <= 0:
+            lightness = 95.0 * dim
+            return f"hsl(0, 0%, {int(round(lightness))}%)"
+
+        step_deg = 360.0 * mos.n / steps
+        hue = (self.anchor_hue + deviation * step_deg) % 360
+        lightness = self.lightness * dim
+        return f"hsl({int(round(hue))}, {int(round(self.saturation))}%, {int(round(lightness))}%)"
 
 
 class SpectrumConsonance:
@@ -295,6 +306,7 @@ class HarmonyColoringScheme(ColoringScheme):
         tuning_coord: Optional[Tuple[int, int]],
         tuning_mos: Optional[sx.MOS],
         spectrum_consonance: SpectrumConsonance,
+        is_mapped: bool = True,
     ) -> Optional[str]:
         """
         Args:
@@ -321,6 +333,8 @@ class HarmonyColoringScheme(ColoringScheme):
             consonance = spectrum_consonance.get_consonance(cents)
             consonance = max(0.0, min(1.0, consonance))
 
+            dim = 0.2 if not is_mapped else 1.0
+
             v = sx.Vector2i(tuning_coord[0], tuning_coord[1])
 
             # White override applies only to true root/equave multiples — i.e.
@@ -331,13 +345,15 @@ class HarmonyColoringScheme(ColoringScheme):
                 white_lightness = (
                     self.white_lightness_min
                     + consonance * (self.white_lightness_max - self.white_lightness_min)
-                )
+                ) * dim
                 return (
                     f"hsl(0, 0%, "
                     f"{int(round(max(0.0, min(100.0, white_lightness))))}%)"
                 )
 
-            lightness = self.lightness_min + consonance * (self.lightness_max - self.lightness_min)
+            lightness = (
+                self.lightness_min + consonance * (self.lightness_max - self.lightness_min)
+            ) * dim
 
             cents_mod = cents % equave_cents
             hue = ((cents_mod / equave_cents) * 360.0 + self.hue_offset_deg) % 360.0

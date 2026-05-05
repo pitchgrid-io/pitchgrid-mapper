@@ -778,10 +778,14 @@ class PGIsomapApp:
         if scheme != SCHEME_SCALE and not self._controller_supports_rgb():
             scheme = SCHEME_SCALE
 
+        is_mapped = mos_coord in self.tuning_handler.coord_to_scale_index
+
         if scheme == SCHEME_RAINBOW:
             return DEFAULT_RAINBOW_SCHEME.get_color(
                 mos_coord=mos_coord,
                 mos=self.tuning_handler.mos,
+                steps=self.tuning_handler.steps,
+                is_mapped=is_mapped,
             )
 
         if scheme == SCHEME_HARMONY:
@@ -791,6 +795,7 @@ class PGIsomapApp:
                 tuning_coord=tuning_coord,
                 tuning_mos=tuning_mos,
                 spectrum_consonance=self._spectrum_consonance,
+                is_mapped=is_mapped,
             )
 
         return DEFAULT_COLORING_SCHEME.get_color(
