@@ -1,0 +1,20 @@
+[package]
+name = "wooting_key_recorder"
+version = "0.1.0"
+edition = "2021"
+description = "Per-key analog-travel recorder for Wooting keyboards"
+
+[[bin]]
+name = "key_recorder"
+path = "src/main.rs"
+
+[dependencies]
+libloading = "0.8"
+spin_sleep = "1.2"
+env_logger = "0.11"
+log = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
