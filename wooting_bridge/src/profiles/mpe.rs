@@ -10,7 +10,7 @@ use crate::midi::{
 };
 use crate::velocity::{VelocityEvent, VelocityFsm};
 
-use super::{InputProfile, KeyDescriptor, ProfileConfig, ProfileMeta};
+use super::{read_sensitivity, InputProfile, KeyDescriptor, ProfileConfig, ProfileMeta};
 
 /// Per-channel pressure smoother + transmit throttle.
 #[derive(Debug, Clone, Copy)]
@@ -83,14 +83,18 @@ impl InputProfile for MpeProfile {
     fn process(&mut self, key: KeyDescriptor, keycode: u16, depth: f32, now: Instant) -> MidiBatch {
         let mut out = MidiBatch::new();
 
+        let sens = read_sensitivity(&self.config.sensitivity);
         let fsm = self
             .fsms
             .entry(keycode)
             .or_insert_with(|| VelocityFsm::new(self.config.velocity));
-        let event = fsm.update(depth, now);
+        let event = fsm.update(depth, now, sens);
 
         match event {
             VelocityEvent::NoteOn(velocity) => {
+                // Sensitivity has already been baked into the velocity by the
+                // FSM via dt scaling — full 1..=127 range is always reachable
+                // for a fast-enough press at any positive sensitivity.
                 // Allocate a channel; if we steal an active one, emit its NoteOff first.
                 let (channel, stolen) = self.allocator.acquire(keycode, key.controller_note);
                 if let Some(ev) = stolen {
@@ -222,6 +226,44 @@ mod tests {
         let off = p.shutdown();
         assert_eq!(off.len(), 2);
         assert!(off.iter().all(|m| m[0] & 0xF0 == 0x80));
+    }
+
+    #[test]
+    fn sensitivity_shapes_note_on_velocity() {
+        // With input-scaling sensitivity, the same dt at higher sens gives
+        // a higher velocity (effective dt is shorter) and vice versa. The
+        // full 1..=127 range remains reachable at any positive sensitivity.
+        let cfg_lo = ProfileConfig::default();
+        super::super::store_sensitivity(&cfg_lo.sensitivity, 0.5);
+        let mut p_lo = MpeProfile::new(cfg_lo);
+        let cfg_hi = ProfileConfig::default();
+        super::super::store_sensitivity(&cfg_hi.sensitivity, 1.5);
+        let mut p_hi = MpeProfile::new(cfg_hi);
+
+        let t0 = Instant::now();
+        let k = key(0, 0, 60);
+        let press = |p: &mut MpeProfile| {
+            p.process(k, 0x1d, 0.20, t0);
+            let b = p.process(k, 0x1d, 0.55, t0 + Duration::from_millis(8));
+            b.iter().find(|m| m[0] & 0xF0 == 0x90).map(|m| m[2]).unwrap_or(0)
+        };
+        let lo = press(&mut p_lo);
+        let hi = press(&mut p_hi);
+        assert!(hi > lo, "sensitivity 1.5 ({hi}) should exceed 0.5 ({lo})");
+
+        // And: at low sensitivity a fast-enough press still reaches 127.
+        let cfg_very_lo = ProfileConfig::default();
+        super::super::store_sensitivity(&cfg_very_lo.sensitivity, 0.3);
+        let mut p_vl = MpeProfile::new(cfg_very_lo);
+        p_vl.process(k, 0x1d, 0.20, t0);
+        // dt = 0.3 ms => effective dt = 1 ms < min_dt_ms (2ms) => v = 127.
+        let evt = p_vl.process(k, 0x1d, 0.55, t0 + Duration::from_micros(300));
+        let v = evt
+            .iter()
+            .find(|m| m[0] & 0xF0 == 0x90)
+            .map(|m| m[2])
+            .unwrap_or(0);
+        assert_eq!(v, 127, "max velocity should be reachable even at low sens");
     }
 
     #[test]

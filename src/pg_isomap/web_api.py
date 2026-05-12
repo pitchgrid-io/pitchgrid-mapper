@@ -172,6 +172,7 @@ class WebAPI:
             ok = self.app.set_wooting_profile(name)
             return {'success': ok}
 
+
         @self.fastapi.post("/api/controllers/set_option")
         async def set_dynamic_option(request: SetDynamicOptionRequest):
             """Set a dynamic UI option value and resend setup commands."""
@@ -280,6 +281,20 @@ class WebAPI:
                                         'type': 'status_update',
                                         'status': self.app.get_status()
                                     })
+                        elif message_type == 'set_wooting_sensitivity':
+                            # Live sensitivity slider — broadcast the new
+                            # value so every connected client's label and
+                            # slider position stay in sync.
+                            try:
+                                value = float(message.get('value'))
+                            except (TypeError, ValueError):
+                                logger.debug("set_wooting_sensitivity: bad value")
+                                continue
+                            self.app.set_wooting_sensitivity(value)
+                            await self._broadcast({
+                                'type': 'status_update',
+                                'status': self.app.get_status()
+                            })
                     except json.JSONDecodeError:
                         logger.warning(f"Invalid JSON in WebSocket message: {data}")
                     except Exception as e:

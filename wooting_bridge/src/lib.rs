@@ -164,6 +164,10 @@ impl Bridge {
         let per_note_sustain_enabled = Arc::new(AtomicBool::new(
             cfg_get_bool(config, "per_note_sustain_enabled", false)?,
         ));
+        let initial_sens = cfg_get_f32(config, "sensitivity", 1.0)?;
+        let sensitivity = Arc::new(std::sync::atomic::AtomicU32::new(
+            initial_sens.clamp(0.0, 8.0).to_bits(),
+        ));
 
         let profile_config = ProfileConfig {
             velocity,
@@ -174,6 +178,7 @@ impl Bridge {
             aftertouch_min_interval_ms: cfg_get_f32(config, "aftertouch_min_interval_ms", 5.0)?,
             master_sustain: master_sustain.clone(),
             per_note_sustain_enabled: per_note_sustain_enabled.clone(),
+            sensitivity: sensitivity.clone(),
         };
         let default_profile = cfg_get_str(config, "default_profile", "mpe")?;
         let poll_us = cfg_get_u32(config, "min_poll_interval_us", 125)? as u64;
@@ -312,6 +317,16 @@ impl Bridge {
             .profile_config
             .per_note_sustain_enabled
             .load(Ordering::Acquire)
+    }
+
+    /// Set the analog-input sensitivity multiplier (1.0 = neutral, >1.0
+    /// louder, <1.0 quieter). Applies to all profiles. Clamped 0..=8.
+    fn set_sensitivity(&self, value: f32) {
+        profiles::store_sensitivity(&self.inner.profile_config.sensitivity, value);
+    }
+
+    fn sensitivity(&self) -> f32 {
+        profiles::read_sensitivity(&self.inner.profile_config.sensitivity)
     }
 
     fn set_pad_colors(&self, list: &Bound<'_, PyList>) -> PyResult<()> {

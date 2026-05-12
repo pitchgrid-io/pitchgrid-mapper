@@ -165,6 +165,19 @@ class WootingBridge:
     def per_note_sustain_enabled(self) -> bool:
         return bool(self._native_bridge.per_note_sustain_enabled())
 
+    def set_sensitivity(self, value: float) -> None:
+        """Set the analog-input sensitivity multiplier.
+
+        1.0 = neutral, >1.0 louder, <1.0 quieter. Applied to every profile
+        as a final scaling on the computed NoteOn velocity (clamped 1..127).
+        Held notes are unaffected — the slider's effect is on future
+        NoteOns only.
+        """
+        self._native_bridge.set_sensitivity(float(value))
+
+    def sensitivity(self) -> float:
+        return float(self._native_bridge.sensitivity())
+
     def _drain_loop(self) -> None:
         interval = max(0.001, settings.wooting_drain_interval_ms / 1000.0)
         while self._drain_running:

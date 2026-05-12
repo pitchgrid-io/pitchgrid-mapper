@@ -441,6 +441,25 @@ class PGIsomapApp:
         except Exception:
             return None
 
+    def set_wooting_sensitivity(self, value: float) -> bool:
+        """Set the Wooting analog sensitivity multiplier (1.0 = neutral)."""
+        if self._wooting_bridge is None:
+            return False
+        try:
+            self._wooting_bridge.set_sensitivity(value)
+            return True
+        except Exception as exc:
+            logger.error("Failed to set Wooting sensitivity: %s", exc)
+            return False
+
+    def get_wooting_sensitivity(self) -> float:
+        if self._wooting_bridge is None:
+            return 1.0
+        try:
+            return self._wooting_bridge.sensitivity()
+        except Exception:
+            return 1.0
+
     def _load_color_scheme(self):
         """Load saved color scheme for current controller, or reset to default.
 
@@ -1171,6 +1190,9 @@ class PGIsomapApp:
             'active': True,
             'profiles': self.get_wooting_profiles(),
             'active_profile': active,
+            'sensitivity': self.get_wooting_sensitivity(),
+            'per_note_sustain_enabled': self._wooting_bridge.per_note_sustain_enabled()
+                if self._wooting_bridge is not None else False,
         }
 
     def _send_controller_setup(self):

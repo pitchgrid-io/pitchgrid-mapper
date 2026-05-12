@@ -22,7 +22,7 @@ use crate::midi::{
     channel_pressure, control_change, mpe_configuration_zone, note_off, note_on, MidiBatch,
 };
 
-use super::{InputProfile, KeyDescriptor, ProfileConfig, ProfileMeta};
+use super::{read_sensitivity, scale_velocity, InputProfile, KeyDescriptor, ProfileConfig, ProfileMeta};
 
 // --- Action geometry / inertia (Hirschkorn Appendix A.1) ----------------
 
@@ -68,11 +68,14 @@ const SIM_ENGAGE_DEPTH: f32 = 0.005;
 const SIM_DISENGAGE_DEPTH: f32 = 0.003;
 
 /// Empirical calibration from `tools/key_recorder/piano_sim.py` over 19
-/// recorded presses, then nudged ~20 % more sensitive based on hardware
-/// playtesting (presses that felt forte were producing quiet MIDI).
-/// 27.72 m/s would have placed the calibration peak at MIDI 127; we use
-/// 23.10 m/s so the same press gets ~120 instead of ~100.
-const HEAD_SPEED_FOR_MIDI_127: f32 = 23.10;
+/// recorded presses, then bumped 2.5× more sensitive than the original
+/// playtesting value (23.10) based on subjective feel during extended
+/// keyboard use — moderate presses were still landing in the lower half
+/// of the velocity range. Dividing by 2.5 means a given hammer head
+/// speed now produces 2.5× the prior MIDI velocity, clamped to 127, so
+/// even softer presses register clearly while the sensitivity slider
+/// retains its full bidirectional headroom.
+const HEAD_SPEED_FOR_MIDI_127: f32 = 9.24;
 
 /// Channel pressure: stream the smoothed key depth post-strike so synths
 /// that respect MPE pressure can inflect the held tone with finger weight.
@@ -363,7 +366,9 @@ impl InputProfile for PianoSimProfile {
 
         // Emit MIDI for any strike event.
         if let Some(head_speed) = strike_speed {
-            let velocity = Self::head_speed_to_velocity(head_speed);
+            let raw_velocity = Self::head_speed_to_velocity(head_speed);
+            let sens = read_sensitivity(&self.config.sensitivity);
+            let velocity = scale_velocity(raw_velocity, sens);
 
             let channel = match sim.channel {
                 Some(c) => c,

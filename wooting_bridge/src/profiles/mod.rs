@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -39,6 +39,32 @@ pub struct ProfileConfig {
     /// emit CC64=0 on release if master sustain is also off (so the
     /// per-note signal never fights the master pedal).
     pub per_note_sustain_enabled: Arc<AtomicBool>,
+    /// Output-velocity sensitivity multiplier, runtime-tunable. 1.0 leaves
+    /// each profile's natural velocity curve intact; >1.0 increases the
+    /// loudness of a given press; <1.0 quiets it. Profiles read this when
+    /// emitting NoteOn and apply it as a final scaling on the computed
+    /// MIDI velocity (clamped to 1..=127). Stored as the bits of an f32 in
+    /// an AtomicU32 so reads on the hot path are lock-free.
+    pub sensitivity: Arc<AtomicU32>,
+}
+
+/// Read the current sensitivity factor (>= 0). Defaults to 1.0.
+pub fn read_sensitivity(s: &AtomicU32) -> f32 {
+    let bits = s.load(std::sync::atomic::Ordering::Acquire);
+    let v = f32::from_bits(bits);
+    if v.is_finite() && v >= 0.0 { v } else { 1.0 }
+}
+
+pub fn store_sensitivity(s: &AtomicU32, value: f32) {
+    let v = value.clamp(0.0, 8.0);
+    s.store(v.to_bits(), std::sync::atomic::Ordering::Release);
+}
+
+/// Apply sensitivity to a raw MIDI velocity. Clamps to 1..=127; returns 0
+/// is never produced (would be NoteOff in disguise).
+pub fn scale_velocity(raw: u8, sensitivity: f32) -> u8 {
+    let scaled = (raw as f32 * sensitivity).round() as i32;
+    scaled.clamp(1, 127) as u8
 }
 
 impl Default for ProfileConfig {
@@ -52,6 +78,7 @@ impl Default for ProfileConfig {
             aftertouch_min_interval_ms: 5.0,
             master_sustain: Arc::new(AtomicBool::new(false)),
             per_note_sustain_enabled: Arc::new(AtomicBool::new(false)),
+            sensitivity: Arc::new(AtomicU32::new((1.0f32).to_bits())),
         }
     }
 }

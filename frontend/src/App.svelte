@@ -74,6 +74,8 @@
     active: boolean;
     profiles: WootingProfile[];
     active_profile: string | null;
+    sensitivity: number;
+    per_note_sustain_enabled: boolean;
   }
 
   const COLOR_SCHEME_LABELS: Record<string, string> = {
@@ -236,6 +238,18 @@
       }
     } catch (error) {
       console.error('Error setting Wooting profile:', error);
+    }
+  }
+
+  function handleWootingSensitivity(event: Event) {
+    const target = event.target as HTMLInputElement;
+    const value = parseFloat(target.value);
+    if (!isFinite(value)) return;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'set_wooting_sensitivity',
+        value,
+      }));
     }
   }
 
@@ -589,6 +603,21 @@
               </option>
             {/each}
           </select>
+
+          <label for="wooting-sensitivity" class="sensitivity-label">
+            Sensitivity:
+            <span class="sensitivity-value">{(status.wooting.sensitivity ?? 1).toFixed(2)}×</span>
+          </label>
+          <input
+            id="wooting-sensitivity"
+            type="range"
+            min="0.25"
+            max="2.5"
+            step="0.05"
+            value={status.wooting.sensitivity ?? 1}
+            on:input={handleWootingSensitivity}
+            title="Final velocity multiplier applied to all Wooting profiles (1.0 = neutral)"
+          />
         {/if}
       </div>
 
@@ -1008,6 +1037,23 @@
 
   .controller-selector label {
     font-weight: 500;
+  }
+
+  .sensitivity-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+  }
+
+  .sensitivity-value {
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.75;
+    min-width: 3.5em;
+  }
+
+  #wooting-sensitivity {
+    width: 8em;
   }
 
   .dynamic-options {
