@@ -66,7 +66,7 @@ class WootingBridge:
             )
 
         rgb_address_map: Dict[Tuple[int, int], Tuple[int, int]] = (
-            controller_config.wooting_rgb_address_map
+            controller_config.build_wooting_rgb_address_map()
         )
 
         cfg: Dict[str, Any] = {

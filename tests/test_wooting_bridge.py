@@ -96,10 +96,8 @@ HorizonToRowAngle: 0.0
 RowToColAngle: 60.0
 xSpacing: 19.0
 ySpacing: 22
-wootingKeycodeMap:
-  0x1d: [0, 0]
-  0x1b: [1, 0]
-  0x06: [2, 0]
+fixedLabels:
+  - ["Z", "X", "C"]
 noteAssign: "30 + cumulativeIndex(x, y)"
 defaultIsoRootCoordinate: [0, 0]
 """
@@ -112,7 +110,8 @@ def test_controller_config_loads_wooting_metadata(tmp_path):
     cc = _wooting_yaml_config(tmp_path)
     assert cc.is_wooting()
     assert cc.wooting_product_id == 0x1342
-    assert cc.wooting_keycode_map == {0x1d: (0, 0), 0x1b: (1, 0), 0x06: (2, 0)}
+    # HID codes derived from fixedLabels via the standard usage table.
+    assert cc.derive_wooting_hid_to_xy() == {0x1D: (0, 0), 0x1B: (1, 0), 0x06: (2, 0)}
 
 
 def test_keymap_for_bridge_includes_controller_notes(tmp_path):

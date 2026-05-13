@@ -17,6 +17,24 @@ from scipy.spatial import Voronoi
 logger = logging.getLogger(__name__)
 
 
+# Standard USB HID Keyboard Usage IDs (Usage Page 0x07), keyed by the same
+# label strings that appear in `fixedLabels`. Used to derive HID keycodes
+# for Wooting controllers without listing them per-pad in the YAML.
+HID_USAGE_BY_LABEL: Dict[str, int] = {
+    "A": 0x04, "B": 0x05, "C": 0x06, "D": 0x07, "E": 0x08, "F": 0x09,
+    "G": 0x0A, "H": 0x0B, "I": 0x0C, "J": 0x0D, "K": 0x0E, "L": 0x0F,
+    "M": 0x10, "N": 0x11, "O": 0x12, "P": 0x13, "Q": 0x14, "R": 0x15,
+    "S": 0x16, "T": 0x17, "U": 0x18, "V": 0x19, "W": 0x1A, "X": 0x1B,
+    "Y": 0x1C, "Z": 0x1D,
+    "1": 0x1E, "2": 0x1F, "3": 0x20, "4": 0x21, "5": 0x22, "6": 0x23,
+    "7": 0x24, "8": 0x25, "9": 0x26, "0": 0x27,
+    "Enter": 0x28, "Esc": 0x29, "Bksp": 0x2A, "Tab": 0x2B, "Space": 0x2C,
+    "-": 0x2D, "=": 0x2E, "[": 0x2F, "]": 0x30, "\\": 0x31,
+    ";": 0x33, "'": 0x34, "`": 0x35, ",": 0x36, ".": 0x37, "/": 0x38,
+    "Right": 0x4F, "Left": 0x50, "Down": 0x51, "Up": 0x52,
+}
+
+
 def find_midi_response_type_position(template: str) -> Optional[int]:
     """
     Parse a MIDI response template and find the byte position of MIDI_RESPONSE_TYPE.
@@ -149,41 +167,45 @@ class ControllerConfig:
             coord = self.config['defaultIsoRootCoordinate']
             self.default_iso_root_coordinate = (coord[0], coord[1])
 
-        # Wooting analog bridge metadata. The presence of `wootingKeycodeMap`
-        # marks this controller as one driven by the native Wooting bridge
-        # rather than by a MIDI port — see `is_wooting()` below.
-        self.wooting_keycode_map: Dict[int, Tuple[int, int]] = {}
-        if 'wootingKeycodeMap' in self.config:
-            raw = self.config['wootingKeycodeMap']
-            if isinstance(raw, dict):
-                for k, v in raw.items():
-                    self.wooting_keycode_map[int(k)] = (int(v[0]), int(v[1]))
-        self.wooting_rgb_address_map: Dict[Tuple[int, int], Tuple[int, int]] = {}
-        if 'wootingRgbAddressMap' in self.config:
-            raw = self.config['wootingRgbAddressMap']
-            # Accept a list of {x, y, row, col} entries (preferred — YAML
-            # cannot hash list keys) or a dict of "x,y" string keys.
-            if isinstance(raw, list):
-                for entry in raw:
-                    self.wooting_rgb_address_map[
-                        (int(entry['x']), int(entry['y']))
-                    ] = (int(entry['row']), int(entry['col']))
-            elif isinstance(raw, dict):
-                for k, v in raw.items():
-                    if isinstance(k, str) and ',' in k:
-                        sx_, sy_ = k.split(',', 1)
-                        self.wooting_rgb_address_map[
-                            (int(sx_.strip()), int(sy_.strip()))
-                        ] = (int(v[0]), int(v[1]))
+        # Wooting analog bridge metadata. A YAML is a Wooting controller iff
+        # `wootingProductId` is set; the HID-keycode → (x,y) map is derived
+        # at lookup time from `fixedLabels` via the standard USB HID Keyboard
+        # Usage Page table (HID_USAGE_BY_LABEL). RGB hardware addressing
+        # comes from the `SetPadColorsBulk` block's `wooting_rgb_sdk` form
+        # below — a pair of lambdas over (x, y).
         self.wooting_vendor_id: Optional[int] = self.config.get('wootingVendorId')
         self.wooting_product_id: Optional[int] = self.config.get('wootingProductId')
         self.wooting_device_label: Optional[str] = self.config.get('wootingDeviceLabel')
 
         # MIDI commands (templates)
         self.set_pad_note_and_channel: Optional[str] = self.config.get('SetPadNoteAndChannel')
-        self.set_pad_color: Optional[str] = self.config.get('SetPadColor')
         self.set_pad_notes_bulk: Optional[str] = self.config.get('SetPadNotesBulk')
         self.set_pad_colors_bulk: Optional[str] = self.config.get('SetPadColorsBulk')
+
+        # SetPadColor: either a SysEx/MIDI template string (the LinnStrument
+        # form) OR a structured dict for non-MIDI backends like the Wooting
+        # RGB SDK. In the latter case the bridge calls the SDK directly
+        # using a pair of lambdas over (x, y) for the hardware row & column:
+        #
+        #   SetPadColor:
+        #     backend: wooting_rgb_sdk
+        #     hw_row: "4 - y"
+        #     hw_col: "x + max(2, y + 1)"
+        self.set_pad_color: Optional[str] = None
+        self.wooting_rgb_hw_row_expr: Optional[str] = None
+        self.wooting_rgb_hw_col_expr: Optional[str] = None
+        raw_spc = self.config.get('SetPadColor')
+        if isinstance(raw_spc, dict):
+            backend = raw_spc.get('backend')
+            if backend == 'wooting_rgb_sdk':
+                self.wooting_rgb_hw_row_expr = raw_spc.get('hw_row')
+                self.wooting_rgb_hw_col_expr = raw_spc.get('hw_col')
+            else:
+                logger.warning(
+                    f"SetPadColor backend '{backend}' not recognised; ignoring"
+                )
+        elif isinstance(raw_spc, str):
+            self.set_pad_color = raw_spc
 
         # Message timing - delay between consecutive MIDI messages (in milliseconds)
         # Default is 1.5ms, but some controllers (like Lumatone) need longer delays
@@ -408,22 +430,88 @@ class ControllerConfig:
 
     def is_wooting(self) -> bool:
         """True if this YAML config drives the native Wooting analog bridge."""
-        return bool(self.wooting_keycode_map)
+        return self.wooting_product_id is not None
+
+    def derive_wooting_hid_to_xy(self) -> Dict[int, Tuple[int, int]]:
+        """Derive HID keycode -> (logical x, y) from `fixedLabels`.
+
+        Walks fixedLabels with the same row-offset arithmetic as `pads`,
+        looks each label up in `HID_USAGE_BY_LABEL`. Labels not in the
+        table (e.g. unusual symbols) are skipped with a debug log.
+        """
+        if not self.fixed_labels:
+            return {}
+        out: Dict[int, Tuple[int, int]] = {}
+        cumulative_row_offset = 0
+        for row_idx in range(self.num_rows):
+            row = self.first_row_idx + row_idx
+            if row_idx > 0:
+                cumulative_row_offset += self.row_offsets[row_idx - 1]
+            if row_idx >= len(self.fixed_labels):
+                continue
+            for col_idx, label in enumerate(self.fixed_labels[row_idx]):
+                hid = HID_USAGE_BY_LABEL.get(label)
+                if hid is None:
+                    logger.debug(
+                        f"No standard HID code for label {label!r} at "
+                        f"(x={cumulative_row_offset + col_idx}, y={row}); skipped"
+                    )
+                    continue
+                out[hid] = (cumulative_row_offset + col_idx, row)
+        return out
 
     def build_wooting_keymap_for_bridge(self) -> Dict[int, Tuple[int, int, int]]:
         """Build the (HID keycode -> (x, y, controller_note)) dict the bridge wants.
 
-        The third tuple element is the same controller MIDI note number any
-        non-Wooting MIDI controller would emit at this position, so the host's
-        reverse-mapping table picks up Wooting events identically.
+        The controller_note is the same MIDI note number `noteAssign(x, y)`
+        produces for any other controller, so the mapper's reverse-mapping
+        table picks up Wooting events identically.
         """
         out: Dict[int, Tuple[int, int, int]] = {}
-        for keycode, (lx, ly) in self.wooting_keycode_map.items():
+        for hid, (lx, ly) in self.derive_wooting_hid_to_xy().items():
             note = self.logical_coord_to_controller_note(lx, ly)
             if note is None:
                 continue
-            out[keycode] = (lx, ly, int(note) & 0x7F)
+            out[hid] = (lx, ly, int(note) & 0x7F)
         return out
+
+    def wooting_rgb_address_for(self, x: int, y: int) -> Optional[Tuple[int, int]]:
+        """Evaluate the SetPadColor's `hw_row`/`hw_col` lambdas for one pad.
+
+        Returns None when the controller doesn't use the Wooting RGB SDK
+        backend or when either expression is malformed.
+        """
+        if not (self.wooting_rgb_hw_row_expr and self.wooting_rgb_hw_col_expr):
+            return None
+        scope = {
+            "x": int(x),
+            "y": int(y),
+            "max": max,
+            "min": min,
+            "abs": abs,
+        }
+        try:
+            hw_row = int(eval(self.wooting_rgb_hw_row_expr, {"__builtins__": {}}, scope))
+            hw_col = int(eval(self.wooting_rgb_hw_col_expr, {"__builtins__": {}}, scope))
+            if hw_row < 0 or hw_col < 0:
+                return None
+            return (hw_row, hw_col)
+        except Exception as exc:
+            logger.warning(
+                f"wooting_rgb_address_for({x},{y}) failed: {exc}"
+            )
+            return None
+
+    def build_wooting_rgb_address_map(self) -> Dict[Tuple[int, int], Tuple[int, int]]:
+        """All (x, y) -> (hw_row, hw_col) entries the bridge needs at init."""
+        result: Dict[Tuple[int, int], Tuple[int, int]] = {}
+        if not (self.wooting_rgb_hw_row_expr and self.wooting_rgb_hw_col_expr):
+            return result
+        for x, y, _, _ in self.pads:
+            addr = self.wooting_rgb_address_for(x, y)
+            if addr is not None:
+                result[(x, y)] = addr
+        return result
 
     def logical_coord_to_controller_channel(self, x: int, y: int) -> int:
         """
