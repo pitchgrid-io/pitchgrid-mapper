@@ -58,6 +58,14 @@ if ! command -v uv &> /dev/null; then
     exit 1
 fi
 
+# Check if Rust toolchain is installed (required to build the
+# pg_wooting_bridge crate via maturin).
+if ! command -v cargo &> /dev/null; then
+    echo "Error: Rust toolchain (cargo) is not installed."
+    echo "Install with: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    exit 1
+fi
+
 # Set up architecture-specific build environment
 NATIVE_ARCH=$(uname -m)
 if [[ "$ARCH" != "$NATIVE_ARCH" ]]; then
@@ -124,6 +132,17 @@ cd ..
 if [ -z "$ARCH_PREFIX" ]; then
     echo "📦 Syncing Python dependencies..."
     uv sync --extra build
+
+    # Force a fresh build of the Wooting bridge wheel. uv's cache has
+    # been observed to serve a stale wheel when only the underlying
+    # Rust source changes — `uv sync` then reports "Built" but actually
+    # reuses the previously-cached .so. For release builds we always
+    # want the bridge to reflect the current source.
+    #
+    # The `./` prefix is required so uv treats wooting_bridge as a local
+    # path rather than a package name on PyPI.
+    echo "🦀 Rebuilding pg-wooting-bridge from source (no cache)..."
+    uv pip install --reinstall --no-cache ./wooting_bridge
 fi
 
 # Clean previous builds

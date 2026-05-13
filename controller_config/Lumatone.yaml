@@ -1,4 +1,4 @@
-DeviceName: "Lumatone [untested]"
+DeviceName: "Lumatone [experimental]"
 ControllerMIDIOutput: "Lumatone"
 ControllerMIDIInput: "Lumatone"
 # Delay between consecutive MIDI messages in milliseconds

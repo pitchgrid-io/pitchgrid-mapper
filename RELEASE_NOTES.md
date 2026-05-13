@@ -1,3 +1,37 @@
+## v0.4.0
+
+### New Features
+
+- **Wooting analog keyboard support**: Wooting 60HE v2 (and the rest of the Wooting Analog family) work as fully expressive, velocity-sensitive MPE microtonal instruments
+  - Hall-effect per-key analog depth (0.0–1.0 at firmware-controlled rates up to 8 kHz) drives both note velocity and post-attack expression
+  - **MPE profile** (default): each note gets its own MPE member channel with continuous channel pressure from key depth, plus the standard pre-note reset triplet (CC74=0, channel pressure=0, pitch bend center) on every note-on
+  - **Piano-key physics profile** (PianoSim): per-key hammer simulation (Hirschkorn 1-DOF model) — velocity comes from simulated hammer head speed at let-off, supports multi-strike, per-note CC64 sustain
+  - Per-pad RGB lighting driven by the same color schemes as the rest of the app (Scale / Rainbow / Harmony)
+  - Spacebar acts as a global sustain pedal; pads stay visually lit while sustain is held
+  - Sensitivity slider for tuning velocity response per playing style
+- **Native Rust bridge (`pg_wooting_bridge`)**: Polling and profile state machines run in a Rust thread without the Python GIL; Python only drains a lock-free MIDI queue. Statically linked Wooting Analog SDK — no separate dylib to install
+- **Self-contained installer**: All Wooting dependencies (analog plugin, RGB SDK, hidapi) are now bundled inside the `.app`. No `/usr/local` writes, no Homebrew dependencies, no manual plugin install — a fresh user plugs in the keyboard and plays
+
+### Improvements
+
+- **Rainbow color scheme reworked**: Cleaner accidental-count gradient, with unmapped pads dimmed for better contrast against playable area
+- **USB-presence detection**: Controllers are now matched against actually-connected USB devices (by VID/PID) rather than just by MIDI port name, so connection state in the UI reflects physical reality
+- **Sustain pedal visuals**: Held pads remain lit while the sustain pedal is down — the visual highlight tracks audible note-off rather than key-up
+- **Compact Wooting YAML**: Per-keyboard configs derive HID and RGB maps automatically from `fixedLabels` + the standard HID usage table — no per-key tables to hand-maintain
+- **Lumatone relabelled `[experimental]`** (was `[untested]`): The Lumatone integration has been hardware-validated since v0.3.0 (ACK-based SysEx, channel-based reverse mapping, color SysEx format, dynamic UI options), so the stale "untested" tag was misleading
+
+### Packaging & Build
+
+- macOS release pipeline is now fully self-contained: no system-wide dependencies, no manual plugin install
+- Wooting analog SDK pulled from a `pitchgrid-io` fork pinned to a specific commit for long-term build reproducibility
+- arm64-only releases for now (vendored Wooting dylibs are arm64-only; x86_64 support pending)
+- `build_app.sh` checks for the Rust toolchain and force-rebuilds the bridge wheel without cache to guarantee the binary reflects the current source
+
+### Fixes
+
+- Fixed LED filter regression on Wooting after the RGB-map refactor
+- Controller switching no longer double-initializes the Wooting bridge (a single `/api/controllers/switch` followed by `/api/controllers/connect` is now the unified flow for every controller type, matching MIDI-controller behavior)
+
 ## v0.3.1
 
 ### New Features

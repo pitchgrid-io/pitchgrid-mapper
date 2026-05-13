@@ -701,7 +701,7 @@ dependencies = [
 [[package]]
 name = "wooting-analog-sdk"
 version = "0.9.1"
-source = "git+https://github.com/WootingKb/wooting-analog-sdk?rev=be67cbf#be67cbf479eb1e10e2859e71dbdcc12fff7ba266"
+source = "git+https://github.com/pitchgrid-io/wooting-analog-sdk?rev=be67cbf#be67cbf479eb1e10e2859e71dbdcc12fff7ba266"
 dependencies = [
  "anyhow",
  "bimap",

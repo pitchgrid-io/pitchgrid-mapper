@@ -37,18 +37,11 @@ echo "  Notarizing arm64 build"
 echo "=========================================="
 ./notarize_app.sh --arch arm64
 
-# Build and notarize x86_64
+# x86_64 builds are currently skipped: the vendored Wooting binaries
+# (analog plugin, RGB SDK, hidapi) are arm64-only. Re-enable once those
+# are also built for Intel or universal2'd via `lipo -create`.
 echo ""
-echo "=========================================="
-echo "  Building for Intel (x86_64)"
-echo "=========================================="
-./build_app.sh --arch x86_64
-
-echo ""
-echo "=========================================="
-echo "  Notarizing x86_64 build"
-echo "=========================================="
-./notarize_app.sh --arch x86_64
+echo "(Skipping x86_64 — vendored Wooting dylibs are arm64-only.)"
 
 # Upload to GitHub
 echo ""

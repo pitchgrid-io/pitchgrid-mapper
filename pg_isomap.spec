@@ -57,15 +57,38 @@ except ImportError:
     else:
         print("WARNING: Could not find scalatrix binary!")
 
+# Vendored Wooting binaries. The analog SDK is statically linked into the
+# pg_wooting_bridge wheel (PyInstaller picks up the .so automatically), but
+# the HID-side plugin and RGB SDK are dlopen'd at runtime — they ship as
+# dylibs under the .app's Resources. install_names were rewritten to
+# @loader_path/... at vendoring time, so no DYLD_LIBRARY_PATH dance needed.
+wooting_binaries = [
+    # The RGB SDK and its hidapi dep live in the same directory so the
+    # @loader_path/libhidapi.0.dylib install_name in the RGB SDK resolves.
+    ('vendor/wooting/libwooting-rgb-sdk.dylib', 'vendor/wooting'),
+    ('vendor/wooting/libhidapi.0.dylib', 'vendor/wooting'),
+    # The Analog SDK is given the plugin *directory* and scans it nested.
+    (
+        'wooting_plugins/universal-analog-plugin-with-wooting-device-support/abiv1.dylib',
+        'wooting_plugins/universal-analog-plugin-with-wooting-device-support',
+    ),
+]
+
 a = Analysis(
     ['launcher.py'],
     pathex=['src'],
-    binaries=scalatrix_binaries,
+    binaries=scalatrix_binaries + wooting_binaries,
     datas=[
         (frontend_dist, 'frontend/dist'),
         (controller_config, 'controller_config'),
         ('assets', 'assets'),
         ('_version.txt', '.'),  # Include version file for runtime
+        # License files for redistributed Wooting binaries.
+        ('vendor/wooting/LICENSE.wooting-rgb-sdk', 'vendor/wooting'),
+        (
+            'wooting_plugins/universal-analog-plugin-with-wooting-device-support/LICENCE',
+            'wooting_plugins/universal-analog-plugin-with-wooting-device-support',
+        ),
     ],
     hiddenimports=[
         'pg_isomap',
