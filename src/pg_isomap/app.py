@@ -1436,7 +1436,7 @@ class PGIsomapApp:
         bridge = self._wooting_bridge
         if bridge is None or self.current_controller is None:
             return
-        addr_map = self.current_controller.wooting_rgb_address_map
+        addr_map = self.current_controller.build_wooting_rgb_address_map()
         try:
             status = self.get_status()
             controller_pads = status.get('controller_pads', [])
