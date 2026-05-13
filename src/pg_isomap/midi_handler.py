@@ -97,6 +97,18 @@ class MIDIHandler:
         self._playing_notes: Dict[int, Tuple[Tuple[int, int], int]] = {}
         self._playing_notes_lock = threading.Lock()
 
+        # Sustain pedal (CC64) state. The MIDIHandler observes incoming
+        # CC64 messages and tracks the held/released state. Deferring the
+        # visual NoteOff (so pads stay lit while the pedal is held) is the
+        # *app's* responsibility — see `on_sustain_change` and the App's
+        # `_handle_sustain_change`. Doing it at the app level means the same
+        # sustain semantics apply to NoteOffs that arrive via this MIDI
+        # handler AND to those that come back through the OSC plugin loop.
+        self._sustain_held: bool = False
+        self._sustain_lock = threading.Lock()
+        # Signature: on_sustain_change(held: bool)
+        self.on_sustain_change: Optional[Callable[[bool], None]] = None
+
     def initialize_virtual_port(self) -> bool:
         """
         Create or connect to virtual MIDI output port named 'PitchGrid Mapper'.
@@ -274,6 +286,27 @@ class MIDIHandler:
         except queue.Full:
             logger.warning("MIDI message queue full, dropping message")
 
+    def is_sustain_held(self) -> bool:
+        """Whether the sustain pedal (CC64) is currently asserted."""
+        with self._sustain_lock:
+            return self._sustain_held
+
+    def _handle_sustain_cc(self, cc_value: int) -> None:
+        """Update sustain state on incoming CC64. Notify the app via the
+        on_sustain_change callback so it can release any visuals it has
+        been holding through the pedal."""
+        new_held = cc_value >= 64
+        with self._sustain_lock:
+            was_held = self._sustain_held
+            self._sustain_held = new_held
+        if was_held != new_held:
+            logger.info(f"sustain CC64 -> {'on' if new_held else 'off'}")
+            if self.on_sustain_change:
+                try:
+                    self.on_sustain_change(new_held)
+                except Exception as e:
+                    logger.error(f"Error in sustain-change callback: {e}")
+
     def inject_message(self, message: List[int], timestamp: Optional[float] = None) -> None:
         """Push a synthesized MIDI message into the same input queue rtmidi feeds.
 
@@ -358,6 +391,21 @@ class MIDIHandler:
                 # Fast path: check if this is a note message
                 status = message[0] & 0xF0 if message else 0
 
+                # Sustain pedal handling (CC64). Works for any controller —
+                # the same code path catches Wooting's spacebar-emitted CC64
+                # and a hardware sustain pedal plugged into a MIDI keyboard.
+                if (
+                    status == 0xB0
+                    and len(message) >= 3
+                    and message[1] == 0x40
+                ):
+                    self._handle_sustain_cc(message[2])
+                    # Still pass the CC64 message through to the virtual
+                    # output so DAWs / synths respect it.
+                    self.midi_out.send_message(message)
+                    self.messages_processed += 1
+                    continue
+
                 if len(message) >= 3 and (status == NOTE_ON or status == NOTE_OFF):
                     # Note message - remap if possible
                     channel = message[0] & 0x0F
@@ -393,7 +441,10 @@ class MIDIHandler:
                                 f"device {note_type} {controller_note} -> ({logical_coord[0]}, {logical_coord[1]}) -> {scale_coord_str} -> note {mapped_note}"
                             )
 
-                            # Notify UI about note event
+                            # Notify UI about note event. Sustain-aware
+                            # deferral lives in the app's _handle_note_event
+                            # so the same logic also applies to NoteOffs
+                            # echoed back via OSC from the PitchGrid plugin.
                             is_note_on = (status == NOTE_ON and velocity > 0)
                             if self.on_note_event:
                                 try:

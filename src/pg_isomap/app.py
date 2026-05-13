@@ -89,6 +89,11 @@ class PGIsomapApp:
         # same "(available)" badge as MIDI controllers.
         self._wooting_usb_pids: set[int] = set()
 
+        # Pads whose visual unhighlight has been deferred because the
+        # sustain pedal is held. Released on the pedal's falling edge.
+        self._sustained_pads: set[tuple[int, int]] = set()
+        self._sustained_pads_lock = threading.Lock()
+
         # Coloring scheme state
         self._color_scheme: str = SCHEME_SCALE
         self._spectrum_consonance = SpectrumConsonance()
@@ -110,6 +115,7 @@ class PGIsomapApp:
         self.osc_handler.on_spectrum = self._handle_spectrum_update
         self.midi_handler.get_scale_coord = self._get_scale_coordinate
         self.midi_handler.on_note_event = self._handle_note_event
+        self.midi_handler.on_sustain_change = self._handle_sustain_change
 
     def start(self):
         """Start the application."""
@@ -956,12 +962,42 @@ class PGIsomapApp:
             self.web_api.broadcast_status_update()
 
     def _handle_note_event(self, logical_x: int, logical_y: int, note_on: bool):
-        """Handle note event from MIDI handler (for UI and controller pad highlighting)."""
+        """Handle note event from MIDI handler, OSC plugin, or UI click.
+
+        Sustain (CC64) is honoured at this level so any source — including
+        the OSC plugin's note_off echo — defers the visual unhighlight while
+        the pedal is held. Once sustain is released, every deferred pad
+        gets a fresh note_off broadcast and pad-color clear (driven by
+        `_handle_sustain_change`).
+        """
+        coord = (logical_x, logical_y)
+        if note_on:
+            with self._sustained_pads_lock:
+                self._sustained_pads.discard(coord)
+        else:
+            held = self.midi_handler.is_sustain_held()
+            if held:
+                with self._sustained_pads_lock:
+                    self._sustained_pads.add(coord)
+                return  # don't broadcast / clear pad color while pedal is held
+
         if self.web_api:
             self.web_api.broadcast_note_event(logical_x, logical_y, note_on)
-
         # Send color to physical controller if it supports SetPadColor
         self._send_pad_playing_color(logical_x, logical_y, note_on)
+
+    def _handle_sustain_change(self, held: bool):
+        """Called by MIDIHandler when CC64 flips. On falling edge, drain
+        every deferred pad and finally clear it visually."""
+        if held:
+            return
+        with self._sustained_pads_lock:
+            to_release = list(self._sustained_pads)
+            self._sustained_pads.clear()
+        for lx, ly in to_release:
+            if self.web_api:
+                self.web_api.broadcast_note_event(lx, ly, False)
+            self._send_pad_playing_color(lx, ly, False)
 
     def _handle_plugin_note_on(self, root_x: int, root_y: int, velocity: int):
         """Handle note_on from PitchGrid plugin (root coords) - highlight corresponding pads."""
