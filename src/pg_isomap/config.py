@@ -88,7 +88,11 @@ class Settings(BaseSettings):
     frontend_dist_dir: Optional[Path] = _get_base_path() / "frontend" / "dist"
 
     # Wooting analog bridge
-    wooting_analog_dylib_path: Optional[Path] = Path("/usr/local/lib/libwooting_analog_sdk.dylib")
+    # The Analog SDK is statically linked into the pg_wooting_bridge wheel —
+    # we only need to tell it where to find the *plugin* directory (the
+    # HID-side adapter, e.g. AnalogSense's abiv1.dylib). The RGB SDK is
+    # still loaded at runtime from its dylib.
+    wooting_plugin_dir: Path = Path("/usr/local/share/WootingAnalogPlugins")
     wooting_rgb_dylib_path: Optional[Path] = Path("/usr/local/lib/libwooting-rgb-sdk.dylib")
     wooting_min_poll_interval_us: int = 125  # 8 kHz upper bound; firmware decides actual rate
     wooting_velocity_arm_threshold: float = 0.15

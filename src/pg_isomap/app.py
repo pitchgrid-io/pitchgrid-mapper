@@ -303,59 +303,71 @@ class PGIsomapApp:
 
     def connect_to_controller(self, device_name: str) -> bool:
         """
-        Connect to a physical controller.
+        Activate a physical controller for live use.
 
-        Args:
-            device_name: Name of the controller from configuration
+        For MIDI controllers, opens the configured input/output ports.
+        For Wooting analog controllers, builds and starts the native bridge.
+        In both cases, sets `current_controller`, loads color scheme and
+        dynamic options, and recalculates the layout.
 
         Returns:
-            True if connection successful
+            True if connection / bridge start succeeded.
         """
-        # Get config
         config = self.controller_manager.get_config(device_name)
         if not config:
             logger.error(f"No configuration found for {device_name}")
             return False
 
-        # Wooting analog controllers are driven by the native bridge instead
-        # of a MIDI port. Take that path before the MIDI port checks.
-        if config.is_wooting():
-            return self._activate_wooting_controller(config)
+        # Tear down any prior hardware connection (MIDI or Wooting).
+        self._stop_wooting_bridge()
+        self.midi_handler.disconnect_controller()
 
-        # Check if this controller has MIDI ports
+        if config.is_wooting():
+            # Build the bridge first so a missing dylib / plugin surfaces
+            # before we mutate app state.
+            try:
+                bridge = WootingBridge(self.midi_handler, config)
+            except WootingNotAvailable as exc:
+                logger.warning("Wooting bridge unavailable: %s", exc)
+                return False
+            except Exception as exc:
+                logger.error("Failed to construct Wooting bridge: %s", exc, exc_info=True)
+                return False
+
+            self._wooting_bridge = bridge
+            self.current_controller = config
+            self._load_color_scheme()
+            self._load_dynamic_option_values()
+            self.current_layout_calculator = None
+            self._recalculate_layout()
+
+            try:
+                bridge.start()
+            except Exception as exc:
+                logger.error("Failed to start Wooting bridge: %s", exc, exc_info=True)
+                self._wooting_bridge = None
+                return False
+
+            logger.info("Wooting bridge active for %s", config.device_name)
+            return True
+
+        # MIDI-controller path.
         if not config.controller_midi_output:
             logger.warning(f"Controller {device_name} has no MIDI output port configured")
             return False
 
-        # Stop any active Wooting bridge from a prior controller selection.
-        self._stop_wooting_bridge()
-
-        # Try to connect using separate input/output ports
         if not self.midi_handler.connect_to_controller(
             output_port_name=config.controller_midi_output,
-            input_port_name=config.controller_midi_input
+            input_port_name=config.controller_midi_input,
         ):
             return False
 
-        # Update current controller
         self.current_controller = config
-
-        # Load persisted color scheme (falls back to scale for palette-only controllers)
         self._load_color_scheme()
-
-        # Load dynamic option values (saved prefs merged with YAML defaults)
         self._load_dynamic_option_values()
-
-        # Reset layout calculator to default when changing controllers
         self.current_layout_calculator = None
-
-        # Send controller setup messages
         self._send_controller_setup()
-
-        # Send dynamic setup commands (pedal polarity, etc.)
         self._send_controller_setup_commands()
-
-        # Recalculate layout
         self._recalculate_layout()
 
         logger.info(f"Connected to {device_name}")
@@ -369,47 +381,6 @@ class PGIsomapApp:
         self._stop_wooting_bridge()
         self.current_controller = None
         logger.info("Controller disconnected")
-
-    def _activate_wooting_controller(self, config: ControllerConfig) -> bool:
-        """Activate a Wooting controller via the native bridge.
-
-        Mirrors the MIDI-controller activation flow: tears down any prior
-        bridge, sets `current_controller`, loads color scheme + dynamic
-        options, recalculates the layout (which triggers
-        `_send_pad_colors_async` → bridge color push), then starts the bridge
-        polling thread.
-        """
-        # Stop any prior bridge or MIDI controller connection.
-        self._stop_wooting_bridge()
-        self.midi_handler.disconnect_controller()
-
-        # Build the bridge first so a missing dylib / plugin surfaces before
-        # we mutate app state.
-        try:
-            bridge = WootingBridge(self.midi_handler, config)
-        except WootingNotAvailable as exc:
-            logger.warning("Wooting bridge unavailable: %s", exc)
-            return False
-        except Exception as exc:
-            logger.error("Failed to construct Wooting bridge: %s", exc, exc_info=True)
-            return False
-
-        self._wooting_bridge = bridge
-        self.current_controller = config
-        self._load_color_scheme()
-        self._load_dynamic_option_values()
-        self.current_layout_calculator = None
-        self._recalculate_layout()
-
-        try:
-            bridge.start()
-        except Exception as exc:
-            logger.error("Failed to start Wooting bridge: %s", exc, exc_info=True)
-            self._wooting_bridge = None
-            return False
-
-        logger.info("Wooting bridge active for %s", config.device_name)
-        return True
 
     def _stop_wooting_bridge(self):
         if self._wooting_bridge is not None:

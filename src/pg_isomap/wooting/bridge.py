@@ -41,22 +41,26 @@ class WootingBridge:
     """
 
     def __init__(self, midi_handler: "MIDIHandler", controller_config: ControllerConfig):
+        logger.info("WootingBridge.__init__ for %s", controller_config.device_name)
         if not controller_config.is_wooting():
             raise WootingNotAvailable(
                 f"Controller {controller_config.device_name} has no wootingKeycodeMap"
             )
         self._native = _import_native()
+        logger.info("WootingBridge: native module loaded: %s", self._native)
         self._midi = midi_handler
         self._cc = controller_config
         self._native_bridge: Any = None
         self._drain_thread: Optional[threading.Thread] = None
         self._drain_running = False
 
-        analog_path = self._resolve_dylib(settings.wooting_analog_dylib_path)
+        plugin_dir = settings.wooting_plugin_dir
         rgb_path = self._resolve_dylib(settings.wooting_rgb_dylib_path)
-        if analog_path is None:
+        logger.info("WootingBridge: plugin_dir=%s exists=%s rgb_path=%s",
+                    plugin_dir, plugin_dir.exists(), rgb_path)
+        if not plugin_dir.exists():
             raise WootingNotAvailable(
-                f"Wooting analog dylib not found at {settings.wooting_analog_dylib_path}"
+                f"Wooting plugin directory not found at {plugin_dir}"
             )
 
         keycode_map: Dict[int, Tuple[int, int, int]] = controller_config.build_wooting_keymap_for_bridge()
@@ -88,14 +92,17 @@ class WootingBridge:
         if controller_config.wooting_product_id is not None:
             product_ids.append(int(controller_config.wooting_product_id))
 
+        logger.info("WootingBridge: constructing native Bridge (%d keys, %d rgb, pids=%s)",
+                    len(keycode_map), len(rgb_address_map), product_ids)
         self._native_bridge = self._native.Bridge(
-            str(analog_path),
+            str(plugin_dir),
             str(rgb_path) if rgb_path else None,
             keycode_map,
             rgb_address_map,
             product_ids,
             cfg,
         )
+        logger.info("WootingBridge: native Bridge constructed OK")
 
     @staticmethod
     def _resolve_dylib(path: Optional[Path]) -> Optional[Path]:

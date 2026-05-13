@@ -64,14 +64,14 @@ def fake_native(monkeypatch):
 
 @pytest.fixture
 def fake_dylibs(monkeypatch, tmp_path):
-    """Make the bridge see a present analog/RGB dylib path so init proceeds."""
+    """Make the bridge see a present plugin dir / RGB dylib path so init proceeds."""
     from pg_isomap.config import settings
 
-    analog = tmp_path / "libwooting_analog_sdk.dylib"
+    plugin_dir = tmp_path / "WootingAnalogPlugins"
+    plugin_dir.mkdir()
     rgb = tmp_path / "libwooting-rgb-sdk.dylib"
-    analog.write_bytes(b"")
     rgb.write_bytes(b"")
-    monkeypatch.setattr(settings, "wooting_analog_dylib_path", analog)
+    monkeypatch.setattr(settings, "wooting_plugin_dir", plugin_dir)
     monkeypatch.setattr(settings, "wooting_rgb_dylib_path", rgb)
     yield
 

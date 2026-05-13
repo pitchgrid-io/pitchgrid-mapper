@@ -11,6 +11,13 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.22", features = ["extension-module", "abi3-py312"] }
+# Analog SDK linked as a Rust crate dependency — no runtime dlopen. The
+# plugin (e.g. AnalogSense's `abiv1.dylib`) is still loaded at runtime
+# from a bundled `wooting_plugins/` directory we hand to the SDK at init.
+# Upstream sets `publish = false`, so we pull from git pinned to a rev.
+wooting-analog-sdk = { git = "https://github.com/WootingKb/wooting-analog-sdk", rev = "be67cbf" }
+# RGB SDK is still dlopen'd via libloading; bundled as a dylib in the
+# .app's Resources for the installer step.
 libloading = "0.8"
 parking_lot = "0.12"
 crossbeam-queue = "0.3"

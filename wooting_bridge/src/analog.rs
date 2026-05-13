@@ -1,20 +1,17 @@
-/// Runtime ctypes-style wrapper around `libwooting_analog_sdk.dylib`.
+//! Wooting Analog SDK wrapper.
+//!
+//! The SDK is linked at compile time via the `wooting-analog-sdk` crate —
+//! no more runtime `dlopen` of `libwooting_analog_sdk.dylib`. The HID-side
+//! plugin (e.g. AnalogSense's `abiv1.dylib`) is still loaded at runtime
+//! from whichever directory the host passes to `initialise`, so the
+//! installer can bundle it inside the `.app`'s Resources.
 
-use std::os::raw::{c_char, c_float, c_int, c_uint, c_ushort};
 use std::path::Path;
 
-use libloading::{Library, Symbol};
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct DeviceInfoFFI {
-    pub vendor_id: u16,
-    pub product_id: u16,
-    pub manufacturer_name: *const c_char,
-    pub device_name: *const c_char,
-    pub device_id: u64,
-    pub device_type: c_int,
-}
+use wooting_analog_sdk::sdk::AnalogSDK;
+use wooting_analog_sdk::{
+    DeviceInfo as SdkDeviceInfo, KeycodeType, WootingAnalogResult,
+};
 
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
@@ -26,132 +23,95 @@ pub struct DeviceInfo {
     pub device_type: i32,
 }
 
+impl From<SdkDeviceInfo> for DeviceInfo {
+    fn from(d: SdkDeviceInfo) -> Self {
+        Self {
+            vendor_id: d.vendor_id,
+            product_id: d.product_id,
+            manufacturer_name: d.manufacturer_name,
+            device_name: d.device_name,
+            device_id: d.device_id,
+            device_type: d.device_type as i32,
+        }
+    }
+}
+
 pub struct AnalogSdk {
-    _lib: Library,
-    initialise: unsafe extern "C" fn() -> c_int,
-    uninitialise: unsafe extern "C" fn() -> c_int,
-    set_keycode_mode: unsafe extern "C" fn(c_uint) -> c_int,
-    read_full_buffer: unsafe extern "C" fn(*mut c_ushort, *mut c_float, c_uint) -> c_int,
-    get_connected_devices_info:
-        unsafe extern "C" fn(*mut *const DeviceInfoFFI, c_uint) -> c_int,
-    is_initialised: unsafe extern "C" fn() -> bool,
+    sdk: AnalogSDK,
 }
 
-unsafe fn load_fn<T: Copy>(lib: &Library, name: &[u8]) -> Result<T, String> {
-    let s: Symbol<T> = lib.get(name).map_err(|e| e.to_string())?;
-    Ok(*s)
-}
-
-unsafe impl Send for AnalogSdk {}
+// AnalogSDK already declares `unsafe impl Send`; we only ever touch it
+// from the poll thread but expose it through the same Arc<BridgeInner>
+// the RGB / lifecycle code uses.
 unsafe impl Sync for AnalogSdk {}
 
 impl AnalogSdk {
-    pub fn open(dylib_path: &Path) -> Result<Self, String> {
-        let lib = unsafe { Library::new(dylib_path) }
-            .map_err(|e| format!("dlopen failed: {e}"))?;
-        let initialise = unsafe { load_fn(&lib, b"wooting_analog_initialise")? };
-        let uninitialise = unsafe { load_fn(&lib, b"wooting_analog_uninitialise")? };
-        let set_keycode_mode = unsafe { load_fn(&lib, b"wooting_analog_set_keycode_mode")? };
-        let read_full_buffer = unsafe { load_fn(&lib, b"wooting_analog_read_full_buffer")? };
-        let get_connected_devices_info =
-            unsafe { load_fn(&lib, b"wooting_analog_get_connected_devices_info")? };
-        let is_initialised = unsafe { load_fn(&lib, b"wooting_analog_is_initialised")? };
-        Ok(Self {
-            _lib: lib,
-            initialise,
-            uninitialise,
-            set_keycode_mode,
-            read_full_buffer,
-            get_connected_devices_info,
-            is_initialised,
-        })
+    /// Construct an uninitialised SDK instance with the keycode mode set to
+    /// HID Usage IDs (what our YAML labels resolve to via
+    /// `HID_USAGE_BY_LABEL`). Call `initialise(plugin_dir)` to actually
+    /// load plugins and talk to the keyboard.
+    pub fn new() -> Self {
+        let mut sdk = AnalogSDK::new();
+        sdk.keycode_mode = KeycodeType::HID;
+        Self { sdk }
     }
 
-    pub fn initialise(&self) -> Result<u32, i32> {
-        let rc = unsafe { (self.initialise)() };
-        if rc < 0 {
-            Err(rc)
-        } else {
-            Ok(rc as u32)
+    pub fn initialise(&mut self, plugin_dir: &Path) -> Result<u32, i32> {
+        let dir = plugin_dir.to_string_lossy();
+        match self.sdk.initialise_with_plugin_path(&dir, true).0 {
+            Ok(count) => Ok(count),
+            Err(err) => Err(err as i32),
         }
     }
 
-    pub fn uninitialise(&self) {
-        unsafe {
-            (self.uninitialise)();
-        }
+    pub fn uninitialise(&mut self) {
+        self.sdk.unload();
     }
 
     pub fn is_initialised(&self) -> bool {
-        unsafe { (self.is_initialised)() }
+        self.sdk.initialised
     }
 
-    /// Set keycode mode. 0=HID, 1=ScanCode1, 2=VirtualKey, 3=VirtualKeyTranslate.
-    pub fn set_keycode_mode_hid(&self) -> Result<(), i32> {
-        let rc = unsafe { (self.set_keycode_mode)(0) };
-        if rc < 0 {
-            Err(rc)
-        } else {
-            Ok(())
-        }
+    /// Keycode mode is already HID after `new()`; this remains for parity
+    /// with the previous dlopen API the bridge expected.
+    pub fn set_keycode_mode_hid(&mut self) -> Result<(), i32> {
+        self.sdk.keycode_mode = KeycodeType::HID;
+        Ok(())
     }
 
+    /// Drain the SDK's full-buffer read into the caller's pre-allocated
+    /// arrays. Returns the count actually written (0 if nothing pressed).
     pub fn read_full_buffer(
-        &self,
+        &mut self,
         keycodes: &mut [u16],
         depths: &mut [f32],
     ) -> Result<usize, i32> {
-        let cap = keycodes.len().min(depths.len()) as c_uint;
-        let rc = unsafe {
-            (self.read_full_buffer)(keycodes.as_mut_ptr(), depths.as_mut_ptr(), cap)
-        };
-        if rc < 0 {
-            Err(rc)
-        } else {
-            Ok(rc as usize)
+        let cap = keycodes.len().min(depths.len());
+        if cap == 0 {
+            return Ok(0);
+        }
+        match self.sdk.read_full_buffer(cap, 0).0 {
+            Ok(map) => {
+                let mut n = 0;
+                for (k, v) in map.into_iter() {
+                    if n >= cap {
+                        break;
+                    }
+                    keycodes[n] = k;
+                    depths[n] = v;
+                    n += 1;
+                }
+                Ok(n)
+            }
+            Err(WootingAnalogResult::NoDevices) => Ok(0),
+            Err(err) => Err(err as i32),
         }
     }
 
-    pub fn get_connected_devices(&self) -> Vec<DeviceInfo> {
-        let mut buf: Vec<*const DeviceInfoFFI> = vec![std::ptr::null(); 16];
-        let n = unsafe {
-            (self.get_connected_devices_info)(buf.as_mut_ptr(), buf.len() as c_uint)
-        };
-        if n <= 0 {
-            return Vec::new();
+    pub fn get_connected_devices(&mut self) -> Vec<DeviceInfo> {
+        match self.sdk.get_device_info().0 {
+            Ok(devs) => devs.into_iter().map(DeviceInfo::from).collect(),
+            Err(_) => Vec::new(),
         }
-        let mut out = Vec::with_capacity(n as usize);
-        for i in 0..n as usize {
-            let p = buf[i];
-            if p.is_null() {
-                continue;
-            }
-            unsafe {
-                let info = *p;
-                let mfr = if info.manufacturer_name.is_null() {
-                    String::new()
-                } else {
-                    std::ffi::CStr::from_ptr(info.manufacturer_name)
-                        .to_string_lossy()
-                        .into_owned()
-                };
-                let name = if info.device_name.is_null() {
-                    String::new()
-                } else {
-                    std::ffi::CStr::from_ptr(info.device_name)
-                        .to_string_lossy()
-                        .into_owned()
-                };
-                out.push(DeviceInfo {
-                    vendor_id: info.vendor_id,
-                    product_id: info.product_id,
-                    manufacturer_name: mfr,
-                    device_name: name,
-                    device_id: info.device_id,
-                    device_type: info.device_type as i32,
-                });
-            }
-        }
-        out
     }
 }

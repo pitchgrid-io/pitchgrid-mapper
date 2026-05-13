@@ -110,23 +110,20 @@ class WebAPI:
         @self.fastapi.post("/api/controllers/switch")
         async def switch_controller(request: ConnectControllerRequest):
             """
-            Switch to a controller configuration without requiring MIDI connection.
+            Switch to a controller configuration without activating hardware.
 
             This loads the controller's pad layout and geometry, but doesn't
-            establish a MIDI connection. Useful for Computer Keyboard and for
-            visualizing controllers that aren't physically connected.
+            open MIDI ports or start the Wooting native bridge. Useful for
+            Computer Keyboard and for visualizing controllers that aren't
+            physically connected.
 
-            For Wooting analog controllers (YAMLs with `wootingKeycodeMap`),
-            the call instead activates the native bridge.
+            The frontend follows /switch with /connect when the controller is
+            detected, which opens the MIDI ports (for MIDI controllers) or
+            starts the native bridge (for Wooting).
             """
             config = self.app.controller_manager.get_config(request.device_name)
             if not config:
                 return {'success': False, 'error': f'Controller config not found: {request.device_name}'}
-
-            # Wooting controllers go through the native bridge path.
-            if config.is_wooting():
-                ok = self.app.connect_to_controller(request.device_name)
-                return {'success': ok}
 
             # Disconnect from any existing MIDI controller and tear down any
             # active Wooting bridge from a prior selection.

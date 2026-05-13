@@ -39,7 +39,12 @@ struct PadColors {
 }
 
 struct BridgeInner {
-    analog: AnalogSdk,
+    // Mutex because the Rust Analog SDK API takes &mut self; the poll
+    // thread, status queries, and lifecycle calls all touch it via
+    // Arc<BridgeInner>.
+    analog: Mutex<AnalogSdk>,
+    /// Plugin directory passed to `analog.initialise(...)` at start().
+    plugin_dir: std::path::PathBuf,
     rgb: Option<RgbSdk>,
     keymap: Keymap,
     expected_product_ids: Vec<u16>,
@@ -97,24 +102,28 @@ impl Bridge {
     /// Construct a bridge.
     ///
     /// Args:
-    ///   analog_sdk_path: absolute path to `libwooting_analog_sdk.dylib`
-    ///   rgb_sdk_path:    absolute path to `libwooting-rgb-sdk.dylib` (or None)
-    ///   keycode_map:     dict[int, tuple[int,int,int]]   HID code -> (x, y, controller_note)
-    ///   rgb_address_map: dict[tuple[int,int], tuple[int,int]]  (x,y) -> (row, col) for RGB
-    ///   expected_product_ids: list[int]
-    ///   config:          dict with optional knobs (thresholds, intervals, default profile)
+    ///   analog_plugin_dir: directory containing the Wooting Analog SDK
+    ///       plugin(s). The SDK itself is statically linked into this
+    ///       binary — no separate dylib is loaded for the SDK; only the
+    ///       plugin(s) are dlopen'd. Typical values:
+    ///         - dev:  /usr/local/share/WootingAnalogPlugins
+    ///         - app:  <Bundle>.app/Contents/Resources/WootingAnalogPlugins
+    ///   rgb_sdk_path:      absolute path to `libwooting-rgb-sdk.dylib` (or None).
+    ///   keycode_map:       dict[int, tuple[int,int,int]] HID -> (x, y, note).
+    ///   rgb_address_map:   dict[tuple[int,int], tuple[int,int]] (x,y) -> (row, col).
+    ///   expected_product_ids: list[int].
+    ///   config:            dict with optional knobs (thresholds, intervals, default profile).
     #[new]
-    #[pyo3(signature = (analog_sdk_path, rgb_sdk_path, keycode_map, rgb_address_map, expected_product_ids, config))]
+    #[pyo3(signature = (analog_plugin_dir, rgb_sdk_path, keycode_map, rgb_address_map, expected_product_ids, config))]
     fn new(
-        analog_sdk_path: String,
+        analog_plugin_dir: String,
         rgb_sdk_path: Option<String>,
         keycode_map: &Bound<'_, PyDict>,
         rgb_address_map: &Bound<'_, PyDict>,
         expected_product_ids: Vec<u16>,
         config: &Bound<'_, PyDict>,
     ) -> PyResult<Self> {
-        let analog = AnalogSdk::open(&PathBuf::from(&analog_sdk_path))
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to load Analog SDK at {analog_sdk_path}: {e}")))?;
+        let analog = AnalogSdk::new();
 
         let rgb = match rgb_sdk_path {
             Some(p) => match RgbSdk::open(&PathBuf::from(&p)) {
@@ -189,7 +198,8 @@ impl Bridge {
         })?;
 
         let inner = Arc::new(BridgeInner {
-            analog,
+            analog: Mutex::new(analog),
+            plugin_dir: PathBuf::from(&analog_plugin_dir),
             rgb,
             keymap: km,
             expected_product_ids,
@@ -216,14 +226,15 @@ impl Bridge {
         }
         // Initialize the SDK on the calling thread (synchronous and may briefly block).
         py.allow_threads(|| {
-            if let Err(rc) = self.inner.analog.initialise() {
+            let mut analog = self.inner.analog.lock();
+            if let Err(rc) = analog.initialise(&self.inner.plugin_dir) {
                 self.inner
                     .last_error
                     .lock()
                     .replace(format!("Analog SDK initialise failed: {rc}"));
             }
-            let _ = self.inner.analog.set_keycode_mode_hid();
-            let connected = !self.inner.analog.get_connected_devices().is_empty();
+            let _ = analog.set_keycode_mode_hid();
+            let connected = !analog.get_connected_devices().is_empty();
             self.inner.connected.store(connected, Ordering::SeqCst);
             if let Some(rgb) = &self.inner.rgb {
                 rgb.set_auto_update(false);
@@ -273,7 +284,7 @@ impl Bridge {
             for h in drained {
                 let _ = h.join();
             }
-            self.inner.analog.uninitialise();
+            self.inner.analog.lock().uninitialise();
             if let Some(rgb) = &self.inner.rgb {
                 rgb.reset();
                 rgb.close();
@@ -366,7 +377,7 @@ impl Bridge {
         let d = PyDict::new_bound(py);
         d.set_item("running", self.inner.running.load(Ordering::SeqCst))?;
         d.set_item("connected", self.inner.connected.load(Ordering::SeqCst))?;
-        let devices = self.inner.analog.get_connected_devices();
+        let devices = self.inner.analog.lock().get_connected_devices();
         let dev_list = PyList::empty_bound(py);
         for d_ in devices {
             let entry = PyDict::new_bound(py);
@@ -421,9 +432,12 @@ fn poll_thread_loop(inner: Arc<BridgeInner>) {
     while inner.running.load(Ordering::Relaxed) {
         let next_deadline = Instant::now() + inner.poll_interval;
 
-        let n = match inner.analog.read_full_buffer(&mut keycodes, &mut depths) {
-            Ok(n) => n,
-            Err(_) => 0,
+        let n = {
+            let mut analog = inner.analog.lock();
+            match analog.read_full_buffer(&mut keycodes, &mut depths) {
+                Ok(n) => n,
+                Err(_) => 0,
+            }
         };
         let now = Instant::now();
         let mut seen_this_tick: HashMap<u16, f32> = HashMap::new();
