@@ -1,9 +1,19 @@
 # Vendored Wooting binaries — provenance
 
-The dylibs in this directory and in `wooting_plugins/` are prebuilt and
-checked in for self-contained reproducible release builds. Rebuild them
+The shared libraries in this directory and in `wooting_plugins/` are prebuilt
+and checked in for self-contained reproducible release builds. Rebuild them
 from the sources below if you need a different arch (e.g. x86_64 or
 universal2 via `lipo -create`).
+
+## `wooting-rgb-sdk64.dll` (Windows x64)
+
+- License: MPL-2.0 (see `LICENSE.wooting-rgb-sdk`)
+- Upstream: https://github.com/WootingKb/wooting-rgb-sdk
+- Source: official GitHub release artifact
+  `wooting-rgb-sdk-v1.8.0-win-x64.zip` from
+  https://github.com/WootingKb/wooting-rgb-sdk/releases/tag/v1.8.0
+- Notes: hidapi is statically linked into the Windows DLL upstream, so no
+  separate `hidapi.dll` is required on Windows (in contrast to macOS).
 
 ## `libwooting-rgb-sdk.dylib`
 
@@ -34,6 +44,19 @@ universal2 via `lipo -create`).
       <repo>/vendor/wooting/libhidapi.0.dylib
   codesign --force --sign - <repo>/vendor/wooting/libhidapi.0.dylib
   ```
+
+## `wooting_plugins/universal-analog-plugin-with-wooting-device-support/abiv1.dll` (Windows x64)
+
+- License: MIT (Calamity, Inc. — see the directory's `LICENCE`)
+- Upstream: https://github.com/AnalogSense/universal-analog-plugin
+- Source: official GitHub release artifact `Windows.zip` from
+  https://github.com/AnalogSense/universal-analog-plugin/releases/tag/0.3.5
+  (path inside zip:
+  `universal-analog-plugin-with-wooting-device-support/abiv1.dll`)
+- Notes: the upstream zip also ships `abiv0.dll` and a wooting-less
+  `universal-analog-plugin/abiv1.dll`; we only vendor the wooting-enabled
+  `abiv1.dll`, which is what the Analog SDK auto-discovers in our plugin
+  directory.
 
 ## `wooting_plugins/universal-analog-plugin-with-wooting-device-support/abiv1.dylib`
 

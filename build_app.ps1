@@ -16,6 +16,10 @@ if (Test-Path ".env") {
 
 $AppName = $env:APP_NAME
 if (-not $AppName) { $AppName = "PitchGrid Mapper" }
+# Export so the pyinstaller spec (a child process) sees the same name.
+# Without this the spec falls back to 'PGIsomap' and references a missing
+# PGIsomap.ico while the build script expects dist\PitchGrid Mapper\.
+$env:APP_NAME = $AppName
 
 # Version is always derived from pyproject.toml — overriding any value that
 # may have leaked in from .env so the single source of truth is the project

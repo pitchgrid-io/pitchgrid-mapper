@@ -54,12 +54,22 @@ if scalatrix_so_path:
 a = Analysis(
     ['launcher.py'],
     pathex=['src'],
-    binaries=scalatrix_binaries,
+    binaries=[
+        *scalatrix_binaries,
+        ('wooting_plugins/universal-analog-plugin-with-wooting-device-support/abiv1.dll',
+         'wooting_plugins/universal-analog-plugin-with-wooting-device-support'),
+        ('vendor/wooting/wooting-rgb-sdk64.dll', 'vendor/wooting'),
+    ],
     datas=[
         (frontend_dist, 'frontend/dist'),
         (controller_config, 'controller_config'),
         ('assets', 'assets'),
         ('_version.txt', '.'),  # Include version file for runtime
+        ('vendor/wooting/LICENSE.wooting-rgb-sdk', 'vendor/wooting'),
+        (
+            'wooting_plugins/universal-analog-plugin-with-wooting-device-support/LICENCE',
+            'wooting_plugins/universal-analog-plugin-with-wooting-device-support',
+        ),
     ],
     hiddenimports=[
         'pg_isomap',

@@ -19,6 +19,19 @@ def _get_base_path() -> Path:
         return Path(__file__).parent.parent.parent
 
 
+def _wooting_rgb_lib_name() -> str:
+    """Filename of the Wooting RGB SDK shared library for this platform.
+
+    Upstream ships per-platform artifacts under different names, so we keep
+    the upstream filenames rather than renaming on vendor.
+    """
+    if sys.platform == "darwin":
+        return "libwooting-rgb-sdk.dylib"
+    if sys.platform == "win32":
+        return "wooting-rgb-sdk64.dll"
+    return "libwooting-rgb-sdk.so"
+
+
 def _get_app_version() -> str:
     """Get app version.
 
@@ -94,7 +107,7 @@ class Settings(BaseSettings):
     # resolve relative to _MEIPASS when frozen and relative to the repo
     # root in dev — no /usr/local writes required.
     wooting_plugin_dir: Path = _get_base_path() / "wooting_plugins"
-    wooting_rgb_dylib_path: Optional[Path] = _get_base_path() / "vendor" / "wooting" / "libwooting-rgb-sdk.dylib"
+    wooting_rgb_dylib_path: Optional[Path] = _get_base_path() / "vendor" / "wooting" / _wooting_rgb_lib_name()
     wooting_min_poll_interval_us: int = 125  # 8 kHz upper bound; firmware decides actual rate
     wooting_velocity_arm_threshold: float = 0.15
     wooting_velocity_trigger_threshold: float = 0.50

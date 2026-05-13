@@ -105,12 +105,17 @@ def _scan_windows() -> Set[Tuple[int, int]]:
         'Where-Object { $_.DeviceID -like "*VID_31E3*" } | '
         "Select-Object -ExpandProperty DeviceID"
     )
+    # CREATE_NO_WINDOW (0x08000000) suppresses the console window the OS
+    # would otherwise pop for each powershell invocation. Without it the
+    # discovery loop opens a PowerShell window every 3s in the frozen
+    # (windowed) build — visible only when the parent has no console.
     try:
         proc = subprocess.run(
             ["powershell", "-NoProfile", "-Command", cmd],
             capture_output=True,
             text=True,
             timeout=5.0,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         logger.debug("Wooting USB scan failed: %s", exc)

@@ -10,7 +10,8 @@
   - Spacebar acts as a global sustain pedal; pads stay visually lit while sustain is held
   - Sensitivity slider for tuning velocity response per playing style
 - **Native Rust bridge (`pg_wooting_bridge`)**: Polling and profile state machines run in a Rust thread without the Python GIL; Python only drains a lock-free MIDI queue. Statically linked Wooting Analog SDK — no separate dylib to install
-- **Self-contained installer**: All Wooting dependencies (analog plugin, RGB SDK, hidapi) are now bundled inside the `.app`. No `/usr/local` writes, no Homebrew dependencies, no manual plugin install — a fresh user plugs in the keyboard and plays
+- **Self-contained installer**: All Wooting dependencies (analog plugin and RGB SDK; `hidapi` is statically linked on Windows and vendored on macOS) ship inside the application bundle — `.app` on macOS, signed `.exe` installer on Windows. No `/usr/local` writes, no Homebrew, no Wootility prerequisite, no manual plugin install — a fresh user plugs in the keyboard and plays
+- **Windows support**: Native Windows build (x86_64) joins the macOS arm64 build. Signed via Azure Trusted Signing, packaged with Inno Setup. Requires a virtual MIDI driver (loopMIDI or similar) — see README
 
 ### Improvements
 
@@ -22,10 +23,10 @@
 
 ### Packaging & Build
 
-- macOS release pipeline is now fully self-contained: no system-wide dependencies, no manual plugin install
+- Release pipelines are now fully self-contained on both macOS and Windows: no system-wide dependencies, no manual plugin install
 - Wooting analog SDK pulled from a `pitchgrid-io` fork pinned to a specific commit for long-term build reproducibility
-- arm64-only releases for now (vendored Wooting dylibs are arm64-only; x86_64 support pending)
-- `build_app.sh` checks for the Rust toolchain and force-rebuilds the bridge wheel without cache to guarantee the binary reflects the current source
+- macOS ships arm64 only (vendored Wooting dylibs are arm64-only; x86_64 macOS pending). Windows ships x86_64
+- `build_app.sh` (macOS) and `build_app.ps1` (Windows) check for the Rust toolchain and force-rebuild the bridge wheel without cache to guarantee the binary reflects the current source
 
 ### Fixes
 
