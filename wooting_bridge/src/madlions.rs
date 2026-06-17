@@ -20,6 +20,10 @@ pub const NUM_RGB_SLOTS: usize = 80;
 
 pub struct MadlionsDevice {
     dev: HidDevice,
+    /// Digital NKRO keyboard interface (report 0x06 key bitmap), opened
+    /// best-effort for instant key-down onset detection. None if it couldn't
+    /// be opened — analog background polling then handles onset on its own.
+    nkro: Option<HidDevice>,
     /// analog poll index -> HID keycode (from the soup MAD68HE layout).
     pub index_to_keycode: HashMap<u16, u16>,
     /// distinct 4-key chunk offsets covering every mapped index.
@@ -84,6 +88,19 @@ impl MadlionsDevice {
             .open_path(&path)
             .map_err(|e| format!("open 0xFF60: {e}"))?;
 
+        // Best-effort: open the digital keyboard interface for NKRO onset
+        // hints. On this board the key bitmap (report 0x06) is delivered by the
+        // non-vendor interface; any of its collections that opens surfaces it.
+        // If none opens we simply fall back to analog-only onset detection.
+        let nkro = candidates
+            .iter()
+            .filter(|d| d.usage_page() != RGB_USAGE_PAGE)
+            .find_map(|d| api.open_path(d.path()).ok());
+        log::info!(
+            "Madlions NKRO onset interface: {}",
+            if nkro.is_some() { "opened" } else { "unavailable (analog-only onset)" }
+        );
+
         // Precompute the set of 4-key chunk offsets we need to cover.
         let mut chunk_set: Vec<u8> = index_to_keycode
             .keys()
@@ -94,10 +111,44 @@ impl MadlionsDevice {
 
         Ok(Self {
             dev,
+            nkro,
             index_to_keycode,
             chunks: chunk_set,
             xy_to_slot,
         })
+    }
+
+    /// Whether the digital NKRO onset interface is open.
+    pub fn has_nkro(&self) -> bool {
+        self.nkro.is_some()
+    }
+
+    /// Drain pending input from the NKRO interface; if a report-0x06 key bitmap
+    /// arrived, copy its 240-bit key area into `bitmap` (byte k = HID usages
+    /// 8k..8k+7) and return true. This digital "which keys are down" view lets
+    /// the poll loop start velocity-sampling the instant a key actuates, ahead
+    /// of the analog background scan. No-op (false) when NKRO isn't available.
+    pub fn read_nkro(&self, bitmap: &mut [u8; 32]) -> bool {
+        let Some(dev) = self.nkro.as_ref() else {
+            return false;
+        };
+        let mut buf = [0u8; 64];
+        let mut updated = false;
+        while let Ok(n) = dev.read_timeout(&mut buf, 0) {
+            if n == 0 {
+                break;
+            }
+            // buf[0]=report id (6), buf[1]=modifiers, buf[2..]=key bitmap.
+            if buf[0] == 0x06 && n >= 3 {
+                let copy = (n - 2).min(32);
+                bitmap[..copy].copy_from_slice(&buf[2..2 + copy]);
+                for b in &mut bitmap[copy..] {
+                    *b = 0;
+                }
+                updated = true;
+            }
+        }
+        updated
     }
 
     /// Poll 4 keys starting at `offset`; returns raw travel (0..=350) per key.

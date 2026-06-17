@@ -5,7 +5,7 @@
 //! contention. Python drains a lock-free queue of MIDI bytes at a relaxed
 //! cadence and pushes those bytes into `MIDIHandler.inject_message(...)`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -433,6 +433,14 @@ impl Bridge {
         let d = PyDict::new_bound(py);
         d.set_item("running", self.inner.running.load(Ordering::SeqCst))?;
         d.set_item("connected", self.inner.connected.load(Ordering::SeqCst))?;
+        d.set_item(
+            "madlions_nkro",
+            self.inner
+                .madlions
+                .as_ref()
+                .map(|m| m.lock().has_nkro())
+                .unwrap_or(false),
+        )?;
         let devices = self.inner.analog.lock().get_connected_devices();
         let dev_list = PyList::empty_bound(py);
         for d_ in devices {
@@ -627,23 +635,46 @@ fn madlions_poll_thread_loop(inner: Arc<BridgeInner>) {
     const TRIG_RAW: u16 = 180; // ~0.51
 
     let mut last: HashMap<u16, u16> = HashMap::new(); // index -> travel
+    let mut nkro_bitmap = [0u8; 32]; // digital key-down bitmap (HID usage bits)
+    let mut nkro_down: HashSet<u16> = HashSet::new(); // analog indices down per NKRO
 
     // Idle/held polling throttle. Continuous max-rate polling saturates the
     // shared 0xFF60 handle and suppresses RGB display on macOS, so when no key
     // is mid-strike we pace the loop; a rising key keeps full rate.
     const IDLE_THROTTLE: Duration = Duration::from_micros(2500);
 
-    let is_rising = |c: u8, last: &HashMap<u16, u16>| {
+    // A chunk needs full-rate (velocity) polling if any of its keys is in the
+    // analog arm..trigger window, OR the digital NKRO interface reports it down
+    // but it hasn't triggered yet — the latter starts velocity sampling the
+    // instant a key actuates, ahead of the throttled background scan.
+    let is_rising = |c: u8, last: &HashMap<u16, u16>, nkro_down: &HashSet<u16>| {
         (0..KEYS_PER_POLL).any(|j| {
             let idx = c as u16 + j;
-            index_keycode.contains_key(&idx)
-                && last.get(&idx).map_or(false, |&d| d > ARM_RAW && d < TRIG_RAW)
+            if !index_keycode.contains_key(&idx) {
+                return false;
+            }
+            let d = last.get(&idx).copied().unwrap_or(0);
+            (d > ARM_RAW && d < TRIG_RAW) || (nkro_down.contains(&idx) && d < TRIG_RAW)
         })
     };
 
     while inner.running.load(Ordering::Relaxed) {
-        let rising: Vec<u8> =
-            chunks.iter().copied().filter(|&c| is_rising(c, &last)).collect();
+        // Refresh the digital key-down set from the NKRO interface (no-op if
+        // that interface couldn't be opened).
+        mad.lock().read_nkro(&mut nkro_bitmap);
+        nkro_down.clear();
+        for (&idx, &usage) in &index_keycode {
+            let u = usage as usize;
+            if u / 8 < nkro_bitmap.len() && (nkro_bitmap[u / 8] & (1 << (u % 8))) != 0 {
+                nkro_down.insert(idx);
+            }
+        }
+
+        let rising: Vec<u8> = chunks
+            .iter()
+            .copied()
+            .filter(|&c| is_rising(c, &last, &nkro_down))
+            .collect();
         let busy = !rising.is_empty();
 
         let to_poll: Vec<u8> = if busy {
