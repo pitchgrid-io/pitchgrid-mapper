@@ -35,7 +35,15 @@ impl MadlionsDevice {
         index_to_keycode: HashMap<u16, u16>,
         xy_to_slot: HashMap<(i16, i16), u16>,
     ) -> Result<Self, String> {
-        let api = HidApi::new().map_err(|e| format!("hidapi init: {e}"))?;
+        // Use the same init mode as the wooting-analog-sdk: device discovery
+        // disabled. The hidapi context is a process-global singleton shared
+        // with the SDK; calling `HidApi::new()` (which enables discovery) would
+        // make the SDK's later `disable_device_discovery()` panic. With
+        // discovery disabled we must list devices explicitly per VID.
+        #[allow(deprecated)]
+        let mut api = HidApi::new_without_enumerate().map_err(|e| format!("hidapi init: {e}"))?;
+        // Discovery is disabled, so populate the device list for our VID explicitly.
+        let _ = api.add_devices(MADLIONS_VID, 0);
         let candidates: Vec<_> = api
             .device_list()
             .filter(|d| d.vendor_id() == MADLIONS_VID && d.product_id() == product_id)

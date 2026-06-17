@@ -22,8 +22,13 @@ wooting-analog-sdk = { git = "https://github.com/pitchgrid-io/wooting-analog-sdk
 # .app's Resources for the installer step.
 libloading = "0.8"
 # Raw HID access for Madlions-family HE boards (analog poll + RGB over the
-# 0xFF60 vendor interface). macOS backend uses IOKit; no extra system deps.
-hidapi = "2.6"
+# 0xFF60 vendor interface). This is the SAME hidapi the wooting-analog-sdk
+# pulls in; we declare it with EXACTLY the SDK's features (default-features off,
+# `linux-static-hidraw`) so the unified hidapi build is unchanged from a
+# Wooting-only build. Our code must also init via `new_without_enumerate()`
+# like the SDK, or the shared global hidapi context panics on the SDK's
+# `disable_device_discovery`.
+hidapi = { version = "2.6", default-features = false, features = ["linux-static-hidraw"] }
 parking_lot = "0.12"
 crossbeam-queue = "0.3"
 crossbeam-channel = "0.5"
