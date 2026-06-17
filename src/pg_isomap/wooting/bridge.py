@@ -93,19 +93,22 @@ class WootingBridge:
             product_ids.append(int(controller_config.wooting_product_id))
 
         # Madlions-family board: analog comes from polling 0xFF60, not the
-        # Analog SDK / Wooting RGB dylib. Pass the device PID, the analog
-        # index→keycode map, and the (x,y)→slot RGB map to the native bridge.
-        madlions_product_id = None
-        madlions_index_keycode = None
-        madlions_slot_map = None
+        # Analog SDK / Wooting RGB dylib. The native Bridge takes the Madlions
+        # args as optional keyword params, so we only pass them for a Madlions
+        # board — the Wooting path constructs the bridge with the original
+        # positional signature untouched.
+        madlions_kwargs: Dict[str, Any] = {}
         if controller_config.is_madlions():
-            madlions_product_id = int(controller_config.madlions_product_id)
-            madlions_index_keycode = controller_config.build_madlions_index_keycode()
-            madlions_slot_map = controller_config.build_madlions_slot_map()
+            madlions_kwargs = dict(
+                madlions_product_id=int(controller_config.madlions_product_id),
+                madlions_index_keycode=controller_config.build_madlions_index_keycode(),
+                madlions_slot_map=controller_config.build_madlions_slot_map(),
+            )
             rgb_path = None  # RGB rides the 0xFF60 handle, not the Wooting SDK
 
         logger.info("WootingBridge: constructing native Bridge (%d keys, %d rgb, pids=%s, madlions=%s)",
-                    len(keycode_map), len(rgb_address_map), product_ids, madlions_product_id)
+                    len(keycode_map), len(rgb_address_map), product_ids,
+                    madlions_kwargs.get("madlions_product_id"))
         self._native_bridge = self._native.Bridge(
             str(plugin_dir),
             str(rgb_path) if rgb_path else None,
@@ -113,9 +116,7 @@ class WootingBridge:
             rgb_address_map,
             product_ids,
             cfg,
-            madlions_product_id,
-            madlions_index_keycode,
-            madlions_slot_map,
+            **madlions_kwargs,
         )
         logger.info("WootingBridge: native Bridge constructed OK")
 
