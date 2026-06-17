@@ -124,6 +124,16 @@ PGISOMAP_DEBUG=true uv run python -m pg_isomap
 cd frontend && npm run dev
 ```
 
+### Native bridge (`pg_wooting_bridge`)
+The Rust analog/RGB bridge is an editable maturin install. **`uv run` caches it by
+Python version (0.1.0) and does NOT detect Rust source changes** — it will silently
+restore a stale `.so`. After editing anything under `wooting_bridge/src/`, force a
+rebuild from source:
+```bash
+uv sync --reinstall-package pg-wooting-bridge   # rebuilds + updates uv's cache
+```
+(A plain `maturin develop` installs into `.venv` but the next `uv run` clobbers it.)
+
 ### Testing
 ```bash
 # Run tests

@@ -23,6 +23,9 @@ from typing import Set, Tuple
 logger = logging.getLogger(__name__)
 
 WOOTING_VID: int = 0x31E3
+MADLIONS_VID: int = 0x373B
+# VIDs whose presence on USB marks an analog-bridge controller as available.
+ANALOG_BRIDGE_VIDS: tuple = (WOOTING_VID, MADLIONS_VID)
 PID_ALT_MASK: int = 0xFFF0
 
 
@@ -67,7 +70,7 @@ def _scan_macos() -> Set[Tuple[int, int]]:
             continue
         vid = int(vid_m.group(1))
         pid = int(pid_m.group(1))
-        if vid == WOOTING_VID:
+        if vid in ANALOG_BRIDGE_VIDS:
             out.add((vid, pid))
     return out
 
@@ -93,7 +96,7 @@ def _scan_linux() -> Set[Tuple[int, int]]:
             continue
         vid = int(m.group(1), 16)
         pid = int(m.group(2), 16)
-        if vid == WOOTING_VID:
+        if vid in ANALOG_BRIDGE_VIDS:
             out.add((vid, pid))
     return out
 
@@ -102,7 +105,7 @@ def _scan_windows() -> Set[Tuple[int, int]]:
     # PowerShell + WMI gives the cleanest no-extra-deps Windows listing.
     cmd = (
         "Get-WmiObject Win32_PnPEntity | "
-        'Where-Object { $_.DeviceID -like "*VID_31E3*" } | '
+        'Where-Object { $_.DeviceID -like "*VID_31E3*" -or $_.DeviceID -like "*VID_373B*" } | '
         "Select-Object -ExpandProperty DeviceID"
     )
     # CREATE_NO_WINDOW (0x08000000) suppresses the console window the OS
@@ -129,6 +132,6 @@ def _scan_windows() -> Set[Tuple[int, int]]:
             continue
         vid = int(m.group(1), 16)
         pid = int(m.group(2), 16)
-        if vid == WOOTING_VID:
+        if vid in ANALOG_BRIDGE_VIDS:
             out.add((vid, pid))
     return out

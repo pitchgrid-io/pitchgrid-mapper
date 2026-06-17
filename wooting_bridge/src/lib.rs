@@ -20,12 +20,14 @@ use pyo3::types::{PyBytes, PyDict, PyList};
 mod analog;
 mod channels;
 mod keymap;
+mod madlions;
 mod midi;
 mod profiles;
 mod rgb;
 mod velocity;
 
 use analog::AnalogSdk;
+use madlions::{MadlionsDevice, KEYS_PER_POLL, TRAVEL_FULL};
 use keymap::Keymap;
 use profiles::{InputProfile, KeyDescriptor, ProfileConfig};
 use rgb::RgbSdk;
@@ -45,6 +47,9 @@ struct BridgeInner {
     analog: Mutex<AnalogSdk>,
     /// Plugin directory passed to `analog.initialise(...)` at start().
     plugin_dir: std::path::PathBuf,
+    /// Present iff this bridge drives a Madlions-family board: analog is read
+    /// by polling `0xFF60` (not the Analog SDK) and RGB rides the same handle.
+    madlions: Option<Mutex<MadlionsDevice>>,
     rgb: Option<RgbSdk>,
     keymap: Keymap,
     expected_product_ids: Vec<u16>,
@@ -114,7 +119,7 @@ impl Bridge {
     ///   expected_product_ids: list[int].
     ///   config:            dict with optional knobs (thresholds, intervals, default profile).
     #[new]
-    #[pyo3(signature = (analog_plugin_dir, rgb_sdk_path, keycode_map, rgb_address_map, expected_product_ids, config))]
+    #[pyo3(signature = (analog_plugin_dir, rgb_sdk_path, keycode_map, rgb_address_map, expected_product_ids, config, madlions_product_id=None, madlions_index_keycode=None, madlions_slot_map=None))]
     fn new(
         analog_plugin_dir: String,
         rgb_sdk_path: Option<String>,
@@ -122,8 +127,35 @@ impl Bridge {
         rgb_address_map: &Bound<'_, PyDict>,
         expected_product_ids: Vec<u16>,
         config: &Bound<'_, PyDict>,
+        madlions_product_id: Option<u16>,
+        madlions_index_keycode: Option<&Bound<'_, PyDict>>,
+        madlions_slot_map: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let analog = AnalogSdk::new();
+
+        // Madlions-family board: open the 0xFF60 interface for analog polling
+        // (and RGB). When present, the Analog SDK path is bypassed entirely.
+        let madlions = if let Some(pid) = madlions_product_id {
+            let mut idx_kc: HashMap<u16, u16> = HashMap::new();
+            if let Some(d) = madlions_index_keycode {
+                for (k, v) in d.iter() {
+                    idx_kc.insert(k.extract::<u16>()?, v.extract::<u16>()?);
+                }
+            }
+            let mut xy_slot: HashMap<(i16, i16), u16> = HashMap::new();
+            if let Some(d) = madlions_slot_map {
+                for (k, v) in d.iter() {
+                    let key: (i16, i16) = k.extract()?;
+                    xy_slot.insert(key, v.extract::<u16>()?);
+                }
+            }
+            match MadlionsDevice::open(pid, idx_kc, xy_slot) {
+                Ok(dev) => Some(Mutex::new(dev)),
+                Err(e) => return Err(PyRuntimeError::new_err(format!("Madlions open failed: {e}"))),
+            }
+        } else {
+            None
+        };
 
         let rgb = match rgb_sdk_path {
             Some(p) => match RgbSdk::open(&PathBuf::from(&p)) {
@@ -200,6 +232,7 @@ impl Bridge {
         let inner = Arc::new(BridgeInner {
             analog: Mutex::new(analog),
             plugin_dir: PathBuf::from(&analog_plugin_dir),
+            madlions,
             rgb,
             keymap: km,
             expected_product_ids,
@@ -224,6 +257,26 @@ impl Bridge {
         if self.inner.running.swap(true, Ordering::SeqCst) {
             return Ok(()); // already running
         }
+
+        // Madlions path: no Analog SDK init, no RGB thread. One thread owns the
+        // 0xFF60 handle and does analog polling (plus RGB flushing, later).
+        if self.inner.madlions.is_some() {
+            py.allow_threads(|| {
+                self.inner.connected.store(true, Ordering::SeqCst);
+                let mut prof = self.inner.profile.lock();
+                for msg in prof.priming() {
+                    self.inner.midi_outbox.push(msg.to_vec());
+                }
+            });
+            let inner = Arc::clone(&self.inner);
+            let t = std::thread::Builder::new()
+                .name("madlions-poll".into())
+                .spawn(move || madlions_poll_thread_loop(inner))
+                .map_err(|e| PyRuntimeError::new_err(format!("spawn madlions thread: {e}")))?;
+            self.threads.lock().push(t);
+            return Ok(());
+        }
+
         // Initialize the SDK on the calling thread (synchronous and may briefly block).
         py.allow_threads(|| {
             let mut analog = self.inner.analog.lock();
@@ -284,10 +337,13 @@ impl Bridge {
             for h in drained {
                 let _ = h.join();
             }
-            self.inner.analog.lock().uninitialise();
-            if let Some(rgb) = &self.inner.rgb {
-                rgb.reset();
-                rgb.close();
+            // Only the Wooting path initialises the Analog SDK / RGB SDK.
+            if self.inner.madlions.is_none() {
+                self.inner.analog.lock().uninitialise();
+                if let Some(rgb) = &self.inner.rgb {
+                    rgb.reset();
+                    rgb.close();
+                }
             }
         });
         Ok(())
@@ -543,6 +599,124 @@ fn rgb_thread_loop(inner: Arc<BridgeInner>) {
             last_push = Instant::now();
         }
         std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Madlions analog poll loop. Reads per-key travel over `0xFF60` and feeds the
+/// active profile, exactly like `poll_thread_loop` does for Wooting — only the
+/// source differs. Rising keys (in the velocity window) get exclusive priority
+/// so fast strikes are sampled at ~kHz; otherwise we poll held keys plus one
+/// rotating background chunk to catch new presses.
+fn madlions_poll_thread_loop(inner: Arc<BridgeInner>) {
+    let Some(mad) = inner.madlions.as_ref() else {
+        return;
+    };
+    let (index_keycode, chunks, xy_to_slot) = {
+        let m = mad.lock();
+        (m.index_to_keycode.clone(), m.chunks.clone(), m.xy_to_slot.clone())
+    };
+    if chunks.is_empty() {
+        return;
+    }
+    let mut last_rgb = Instant::now() - inner.rgb_refresh_interval;
+
+    // Raw-travel thresholds (0..=350) mirroring the velocity FSM's normalised
+    // arm/trigger/off so "rising" here means "between arm and trigger".
+    const OFF_RAW: u16 = 35; // ~0.10
+    const ARM_RAW: u16 = 45; // ~0.13
+    const TRIG_RAW: u16 = 180; // ~0.51
+
+    let mut last: HashMap<u16, u16> = HashMap::new(); // index -> travel
+
+    // Idle/held polling throttle. Continuous max-rate polling saturates the
+    // shared 0xFF60 handle and suppresses RGB display on macOS, so when no key
+    // is mid-strike we pace the loop; a rising key keeps full rate.
+    const IDLE_THROTTLE: Duration = Duration::from_micros(2500);
+
+    let is_rising = |c: u8, last: &HashMap<u16, u16>| {
+        (0..KEYS_PER_POLL).any(|j| {
+            let idx = c as u16 + j;
+            index_keycode.contains_key(&idx)
+                && last.get(&idx).map_or(false, |&d| d > ARM_RAW && d < TRIG_RAW)
+        })
+    };
+
+    while inner.running.load(Ordering::Relaxed) {
+        let rising: Vec<u8> =
+            chunks.iter().copied().filter(|&c| is_rising(c, &last)).collect();
+        let busy = !rising.is_empty();
+
+        let to_poll: Vec<u8> = if busy {
+            // A key is mid-strike: poll only its chunk(s) at full rate so the
+            // velocity FSM gets a dense rising edge.
+            rising
+        } else {
+            // Idle/held: one full scan per cycle (all chunks) so new presses are
+            // caught within a single sweep; the throttle below then frees the
+            // handle for RGB.
+            chunks.clone()
+        };
+
+        for off in to_poll {
+            let travels = {
+                let m = mad.lock();
+                m.poll_chunk(off)
+            };
+            let Some(travels) = travels else { continue };
+            let now = Instant::now();
+            for j in 0..KEYS_PER_POLL {
+                let idx = off as u16 + j;
+                let Some(&keycode) = index_keycode.get(&idx) else {
+                    continue;
+                };
+                let travel = travels[j as usize];
+                last.insert(idx, travel);
+                let depth = travel as f32 / TRAVEL_FULL;
+                if let Some(key) = inner.keymap.lookup(keycode) {
+                    let batch = {
+                        let mut prof = inner.profile.lock();
+                        prof.process(key, keycode, depth, now)
+                    };
+                    for msg in batch {
+                        inner.midi_outbox.push(msg.to_vec());
+                    }
+                }
+            }
+        }
+
+        // RGB flush — rate-limited to rgb_refresh_interval, coalesced via the
+        // pad_colors dirty flag. Interleaving RGB writes with analog polls on
+        // the shared handle is fine as long as polling is throttled (below).
+        let due = {
+            let pc = inner.pad_colors.lock();
+            pc.dirty || Instant::now().duration_since(last_rgb) >= inner.rgb_refresh_interval
+        };
+        if due {
+            let mut frame = [(0u8, 0u8, 0u8); madlions::NUM_RGB_SLOTS];
+            {
+                let mut pc = inner.pad_colors.lock();
+                for (xy, &(r, g, b)) in pc.base.iter() {
+                    let (r2, g2, b2) = pc.overlay.get(xy).copied().unwrap_or((r, g, b));
+                    if let Some(&slot) = xy_to_slot.get(xy) {
+                        if (slot as usize) < madlions::NUM_RGB_SLOTS {
+                            frame[slot as usize] = (r2, g2, b2);
+                        }
+                    }
+                }
+                pc.dirty = false;
+            }
+            {
+                let m = mad.lock();
+                m.write_rgb(&frame);
+            }
+            last_rgb = Instant::now();
+        }
+
+        // Pace idle/held polling so it can't saturate the shared handle and
+        // starve RGB; a rising key keeps full rate for accurate velocity.
+        if !busy {
+            std::thread::sleep(IDLE_THROTTLE);
+        }
     }
 }
 

@@ -34,6 +34,24 @@ HID_USAGE_BY_LABEL: Dict[str, int] = {
     "Right": 0x4F, "Left": 0x50, "Down": 0x51, "Up": 0x52,
 }
 
+# Madlions MAD68HE analog-poll key layout: the index returned by the `02 96 1C`
+# travel poll maps to a physical key in this 15-column row-major order. Taken
+# verbatim from soup::AnalogueKeyboard's `layout_madlions_mad68he` table. `None`
+# marks an absent matrix cell. Used to build analog-index -> HID-keycode.
+SOUP_MAD68HE_LAYOUT: List[Optional[str]] = [
+    # row 0 (idx 0..14)
+    "Esc", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Bksp", "Insert",
+    # row 1 (idx 15..29)
+    "Tab", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "[", "]", "\\", "Del",
+    # row 2 (idx 30..44)
+    "Caps", "A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", None, "Enter", "PageUp",
+    # row 3 (idx 45..59)
+    "LShift", None, "Z", "X", "C", "V", "B", "N", "M", ",", ".", "/", "RShift", "Up", "PageDown",
+    # row 4 (idx 60..74)
+    "LCtrl", "LMeta", "LAlt", None, None, None, "Space", None, None, "RAlt", "Fn", "RCtrl",
+    "Left", "Down", "Right",
+]
+
 
 def find_midi_response_type_position(template: str) -> Optional[int]:
     """
@@ -176,6 +194,13 @@ class ControllerConfig:
         self.wooting_vendor_id: Optional[int] = self.config.get('wootingVendorId')
         self.wooting_product_id: Optional[int] = self.config.get('wootingProductId')
         self.wooting_device_label: Optional[str] = self.config.get('wootingDeviceLabel')
+
+        # Madlions-family Hall-effect boards (e.g. MAD68HE). These reuse the
+        # same native bridge + profiles as Wooting, but read analog by polling
+        # the 0xFF60 vendor interface (not the Analog SDK). A YAML is a Madlions
+        # controller iff `madlionsProductId` is set.
+        self.madlions_vendor_id: Optional[int] = self.config.get('madlionsVendorId')
+        self.madlions_product_id: Optional[int] = self.config.get('madlionsProductId')
 
         # MIDI commands (templates)
         self.set_pad_note_and_channel: Optional[str] = self.config.get('SetPadNoteAndChannel')
@@ -431,6 +456,52 @@ class ControllerConfig:
     def is_wooting(self) -> bool:
         """True if this YAML config drives the native Wooting analog bridge."""
         return self.wooting_product_id is not None
+
+    def is_madlions(self) -> bool:
+        """True if this YAML drives a Madlions-family board (analog over 0xFF60)."""
+        return self.madlions_product_id is not None
+
+    def uses_analog_bridge(self) -> bool:
+        """True if this controller is driven by the native analog bridge
+        (Wooting via the Analog SDK, or Madlions via 0xFF60 polling)."""
+        return self.is_wooting() or self.is_madlions()
+
+    def build_madlions_index_keycode(self) -> Dict[int, int]:
+        """Map Madlions analog-poll index -> HID keycode for the playable keys.
+
+        Combines the fixed `SOUP_MAD68HE_LAYOUT` (index -> label) with this
+        controller's own keymap, so only keys that actually carry a note are
+        polled and forwarded to the profile.
+        """
+        valid = set(self.build_wooting_keymap_for_bridge().keys())
+        out: Dict[int, int] = {}
+        for idx, label in enumerate(SOUP_MAD68HE_LAYOUT):
+            if label is None:
+                continue
+            hid = HID_USAGE_BY_LABEL.get(label)
+            if hid is not None and hid in valid:
+                out[idx] = hid
+        return out
+
+    def build_madlions_slot_map(self) -> Dict[Tuple[int, int], int]:
+        """(logical x, y) -> RGB wire slot for Madlions per-key RGB output.
+
+        The 80-slot RGB frame is a 16-column-per-row matrix while the analog
+        poll layout (`SOUP_MAD68HE_LAYOUT`) is 15 columns per row, so a key at
+        analog index `i` lights slot `i + i // 15`. Verified against the real
+        board by lighting each slot and reading which key the analog poll saw
+        (46/46 keys, exact).
+        """
+        hid_to_xy = self.derive_wooting_hid_to_xy()
+        out: Dict[Tuple[int, int], int] = {}
+        for idx, label in enumerate(SOUP_MAD68HE_LAYOUT):
+            if label is None:
+                continue
+            hid = HID_USAGE_BY_LABEL.get(label)
+            if hid is None or hid not in hid_to_xy:
+                continue
+            out[hid_to_xy[hid]] = idx + idx // 15
+        return out
 
     def derive_wooting_hid_to_xy(self) -> Dict[int, Tuple[int, int]]:
         """Derive HID keycode -> (logical x, y) from `fixedLabels`.

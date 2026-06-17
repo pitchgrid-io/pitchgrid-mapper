@@ -36,7 +36,7 @@ from .osc_handler import OSCHandler
 from .preferences import ControllerPreferences
 from .tuning import TuningHandler
 from .wooting import WootingBridge, WootingNotAvailable
-from .wooting.usb_scan import pid_matches_base, scan as wooting_usb_scan
+from .wooting.usb_scan import MADLIONS_VID, pid_matches_base, scan as wooting_usb_scan
 
 import scalatrix as sx
 
@@ -84,10 +84,11 @@ class PGIsomapApp:
         # Wooting analog bridge (active only when current_controller.is_wooting()).
         self._wooting_bridge: Optional[WootingBridge] = None
 
-        # Cache of (vid, pid) pairs from the latest Wooting USB scan, refreshed
-        # by the discovery thread. Read by get_status() so the API surfaces the
-        # same "(available)" badge as MIDI controllers.
-        self._wooting_usb_pids: set[int] = set()
+        # Cache of (vid, pid) pairs from the latest analog-bridge USB scan
+        # (Wooting + Madlions), refreshed by the discovery thread. Read by
+        # get_status()/_controller_present() so the API surfaces the same
+        # "(available)" badge as MIDI controllers.
+        self._analog_usb_vid_pids: set[tuple[int, int]] = set()
 
         # Pads whose visual unhighlight has been deferred because the
         # sustain pedal is held. Released on the pedal's falling edge.
@@ -218,31 +219,14 @@ class PGIsomapApp:
                 # Wooting controllers: scan USB for devices that match each
                 # YAML's wootingProductId (with the +0/+1/+2 alt suffix
                 # masking the SDK uses). This is independent of MIDI ports.
-                wooting_pids = {
-                    pid for _vid, pid in wooting_usb_scan()
-                }
-                self._wooting_usb_pids = wooting_pids
+                detected_vid_pids = wooting_usb_scan()
+                self._analog_usb_vid_pids = detected_vid_pids
                 for config_name in self.controller_manager.get_all_device_names():
                     config = self.controller_manager.get_config(config_name)
                     if not config:
                         continue
-                    if config.is_wooting() and config.wooting_product_id is not None:
-                        if any(
-                            pid_matches_base(pid, int(config.wooting_product_id))
-                            for pid in wooting_pids
-                        ):
-                            current_detected.add(config_name)
-                            logger.debug(
-                                f"Matched {config_name} to USB Wooting device "
-                                f"(PID family 0x{config.wooting_product_id:04X})"
-                            )
-                        continue
-                    if config.controller_midi_output:
-                        for port in available_ports:
-                            if config.controller_midi_output.lower() in port.lower():
-                                current_detected.add(config_name)
-                                logger.debug(f"Matched {config_name} to port {port}")
-                                break
+                    if self._controller_present(config, detected_vid_pids, available_ports):
+                        current_detected.add(config_name)
 
                 # Check if our connected port is still available
                 # If not, auto-disconnect to keep state consistent
@@ -322,7 +306,7 @@ class PGIsomapApp:
         self._stop_wooting_bridge()
         self.midi_handler.disconnect_controller()
 
-        if config.is_wooting():
+        if config.uses_analog_bridge():
             # Build the bridge first so a missing dylib / plugin surfaces
             # before we mutate app state.
             try:
@@ -861,7 +845,7 @@ class PGIsomapApp:
         c = self.current_controller
         if c is None:
             return True
-        if c.is_wooting():
+        if c.uses_analog_bridge():
             return True
         return c.color_enum_to_rgb is None
 
@@ -1055,6 +1039,29 @@ class PGIsomapApp:
 
         return True
 
+    def _controller_present(self, config, vid_pids: set, available_ports: list) -> bool:
+        """True if a controller config's hardware is currently present.
+
+        Single source of truth for "is this controller available", shared by the
+        discovery thread (change detection / auto-connect) and get_status()
+        (on-demand availability) so the two can't drift. `vid_pids` is the cached
+        analog-bridge USB scan; `available_ports` the cached MIDI port list —
+        both refreshed by the discovery thread.
+        """
+        if config.is_wooting() and config.wooting_product_id is not None:
+            return any(
+                pid_matches_base(pid, int(config.wooting_product_id))
+                for _vid, pid in vid_pids
+            )
+        if config.is_madlions() and config.madlions_product_id is not None:
+            return (MADLIONS_VID, int(config.madlions_product_id)) in vid_pids
+        if config.controller_midi_output:
+            return any(
+                config.controller_midi_output.lower() in port.lower()
+                for port in available_ports
+            )
+        return False
+
     def get_status(self) -> dict:
         """Get current application status."""
         # Get detected controllers (those actually available via MIDI)
@@ -1065,20 +1072,8 @@ class PGIsomapApp:
             config = self.controller_manager.get_config(config_name)
             if not config or config.device_name == "Computer Keyboard":
                 continue
-            if config.is_wooting() and config.wooting_product_id is not None:
-                # Match against the cached USB scan (refreshed every discovery cycle).
-                if any(
-                    pid_matches_base(pid, int(config.wooting_product_id))
-                    for pid in self._wooting_usb_pids
-                ):
-                    detected_controllers.append(config_name)
-                continue
-            if config.controller_midi_output:
-                # Check if this controller's MIDI output port is available
-                for port in available_ports:
-                    if config.controller_midi_output.lower() in port.lower():
-                        detected_controllers.append(config_name)
-                        break
+            if self._controller_present(config, self._analog_usb_vid_pids, available_ports):
+                detected_controllers.append(config_name)
 
         # Get controller pads for visualization with note mapping and colors
         controller_pads = []
@@ -1294,7 +1289,7 @@ class PGIsomapApp:
             return
 
         # Wooting bridge has its own RGB path (native, not MIDI templates).
-        if self.current_controller.is_wooting() and self._wooting_bridge is not None:
+        if self.current_controller.uses_analog_bridge() and self._wooting_bridge is not None:
             self._send_pad_colors_to_wooting()
             return
 
@@ -1450,7 +1445,7 @@ class PGIsomapApp:
 
         # Wooting bridge has its own overlay/clear path; this runs even when
         # there's no MIDI controller_out (Wooting has none).
-        if self.current_controller.is_wooting() and self._wooting_bridge is not None:
+        if self.current_controller.uses_analog_bridge() and self._wooting_bridge is not None:
             try:
                 if note_on:
                     r, g, b = self._PLAYING_RGB

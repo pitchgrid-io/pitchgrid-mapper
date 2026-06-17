@@ -21,6 +21,9 @@ wooting-analog-sdk = { git = "https://github.com/pitchgrid-io/wooting-analog-sdk
 # RGB SDK is still dlopen'd via libloading; bundled as a dylib in the
 # .app's Resources for the installer step.
 libloading = "0.8"
+# Raw HID access for Madlions-family HE boards (analog poll + RGB over the
+# 0xFF60 vendor interface). macOS backend uses IOKit; no extra system deps.
+hidapi = "2.6"
 parking_lot = "0.12"
 crossbeam-queue = "0.3"
 crossbeam-channel = "0.5"

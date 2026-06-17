@@ -1,0 +1,37 @@
+DeviceName: "MAD68 HE"
+ControllerMIDIOutput: none
+ControllerMIDIInput: none
+isMPE: true
+hasGlobalPitchBend: false
+
+# Madlions-family Hall-effect board. The native bridge activates iff
+# `madlionsProductId` is set; analog per-key travel is read by polling the
+# 0xFF60 vendor interface (02 96 1C), NOT the Wooting Analog SDK. HID keycodes
+# for each pad are derived from `fixedLabels` via the standard USB HID Keyboard
+# Usage Page table (controller_config.HID_USAGE_BY_LABEL), and the analog-poll
+# index for each key comes from controller_config.SOUP_MAD68HE_LAYOUT.
+madlionsDeviceLabel: "MAD68 HE"
+madlionsVendorId: 0x373B
+madlionsProductId: 0x1058
+
+# Geometry — same playable area as Wooting60HEv2.yaml / ComputerKeyboard.yaml.
+NumRows: 4
+FirstRowIdx: 0
+RowLengths: [10, 11, 13, 12]
+RowOffsets: [-1, -1, -1]
+HorizonToRowAngle: 0.0
+RowToColAngle: 59.74
+xSpacing: 19.0
+ySpacing: 22
+
+fixedLabels:
+  - ["Z", "X", "C", "V", "B", "N", "M", ",", ".", "/"]
+  - ["A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'"]
+  - ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "[", "]", "\\"]
+  - ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "="]
+
+# RGB output (per-key, over the 0xFF60 protocol) is added in a later stage once
+# the 80-slot wire order is mapped; analog play works without it.
+
+noteAssign: "30 + cumulativeIndex(x, y)"
+defaultIsoRootCoordinate: [0, 0]
