@@ -89,6 +89,9 @@ impl InputProfile for MpeProfile {
             .entry(keycode)
             .or_insert_with(|| VelocityFsm::new(self.config.velocity));
         let event = fsm.update(depth, now, sens);
+        // Fire diagnostics (samples used, span, fire reason) — Some only when
+        // the update above fired a NoteOn; exported for host-side analysis.
+        let fire_stats = fsm.take_fire_stats();
 
         match event {
             VelocityEvent::NoteOn(velocity) => {
@@ -106,6 +109,11 @@ impl InputProfile for MpeProfile {
                 }
                 out.push(note_on(channel, key.controller_note, velocity));
                 self.pressure.insert(channel, PressureState::default());
+                if let Some(stats) = fire_stats {
+                    self.config
+                        .velocity_stats
+                        .push((key.controller_note, keycode, stats));
+                }
             }
             VelocityEvent::NoteOff => {
                 if let Some((channel, note)) = self.allocator.release(keycode, now) {

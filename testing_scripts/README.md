@@ -18,4 +18,5 @@ relative path), with the MAD68HE plugged in:
 | `mad68_descriptors.py` | Dumps + parses the board's HID report descriptors (per interface). Useful to confirm capabilities / a new variant's layout. |
 | `mad68_poll_bench.py` | Benchmarks the `0xFF60` analog-poll round-trip rate (polls/sec, implied full-scan Hz). |
 | `mad68_pipeline_test.py` | Verifies the firmware answers pipelined travel requests in order and measures the throughput gain vs serialized polling. |
+| `velocity_stats_test.py` | 10 s capture of velocity fire-diagnostics while you play: per press, the samples used (count, first/last depth, span, effective rate) and whether it fired at the trigger or the detection-window deadline. |
 | `verify_nkro_rewrite.py` | Interactive end-to-end check of the NKRO-driven loop: baseline actuation read → bridge session (play; NoteOn/Off + velocity + sustain printed) → confirms the board's actuation/rapid-trigger config was restored on stop. |

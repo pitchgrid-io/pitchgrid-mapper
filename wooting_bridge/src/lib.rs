@@ -189,7 +189,12 @@ impl Bridge {
             km.rgb_addr.insert(logical, hw);
         }
 
-        // Profile config.
+        // Profile config. The velocity detection window (bounded note-on
+        // latency; see velocity.rs) defaults ON for Madlions — whose NKRO
+        // onset + full-rate rise polling it was designed around — and OFF for
+        // Wooting, where a partial press has never sounded a note. The
+        // config key overrides either way.
+        let default_detect_ms = if madlions.is_some() { 10.0 } else { 0.0 };
         let velocity = VelocityConfig {
             arm: cfg_get_f32(config, "velocity_arm_threshold", 0.15)?,
             trigger: cfg_get_f32(config, "velocity_trigger_threshold", 0.50)?,
@@ -197,6 +202,7 @@ impl Bridge {
             off: cfg_get_f32(config, "velocity_off_threshold", 0.10)?,
             min_dt_ms: cfg_get_f32(config, "velocity_min_dt_ms", 2.0)?,
             max_dt_ms: cfg_get_f32(config, "velocity_max_dt_ms", 80.0)?,
+            max_detect_ms: cfg_get_f32(config, "velocity_max_detect_ms", default_detect_ms)?,
         };
         // Sustain state shared between the bridge poll thread and any
         // active profile. master_sustain follows the spacebar pedal;
@@ -220,6 +226,7 @@ impl Bridge {
             master_sustain: master_sustain.clone(),
             per_note_sustain_enabled: per_note_sustain_enabled.clone(),
             sensitivity: sensitivity.clone(),
+            velocity_stats: Arc::new(crossbeam_queue::SegQueue::new()),
         };
         let default_profile = cfg_get_str(config, "default_profile", "mpe")?;
         let poll_us = cfg_get_u32(config, "min_poll_interval_us", 125)? as u64;
@@ -419,6 +426,26 @@ impl Bridge {
         pc.dirty = true;
     }
 
+    /// Drain velocity fire-diagnostics: one dict per NoteOn since the last
+    /// call — note, keycode, velocity, and what the estimate was computed
+    /// from (n_samples, first/last sample depth, span, fire reason).
+    fn drain_velocity_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        let list = PyList::empty_bound(py);
+        while let Some((note, keycode, st)) = self.inner.profile_config.velocity_stats.pop() {
+            let d = PyDict::new_bound(py);
+            d.set_item("note", note)?;
+            d.set_item("keycode", keycode)?;
+            d.set_item("velocity", st.velocity)?;
+            d.set_item("n_samples", st.n_samples)?;
+            d.set_item("first_depth", st.first_depth)?;
+            d.set_item("last_depth", st.last_depth)?;
+            d.set_item("span_ms", st.span_ms)?;
+            d.set_item("window_fired", st.window_fired)?;
+            list.append(d)?;
+        }
+        Ok(list)
+    }
+
     /// Drain all pending outgoing MIDI messages. Each item is a bytes object
     /// representing one complete MIDI message ready for `MIDIHandler.inject_message`.
     fn drain_midi<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
@@ -615,11 +642,12 @@ fn rgb_thread_loop(inner: Arc<BridgeInner>) {
 const MAD_OFF_RAW: u16 = 35; // ~0.10 — below this the key counts as released
 const MAD_TRIG_RAW: u16 = 180; // ~0.51 — at/above this the note has fired
 
-/// How long a key may sit in the rising phase (NKRO-down but not yet
-/// triggered) at full poll rate before being demoted to the held cadence.
-/// Covers max_dt (80 ms) with a wide margin; a finger resting lightly on a
-/// key must not hog the handle forever.
-const MAD_RISING_TIMEOUT: Duration = Duration::from_millis(300);
+/// How long a key may sit in the rising phase (NKRO-down but not yet at the
+/// trigger depth) at full poll rate before being demoted to the held cadence.
+/// The velocity detection window fires (or cancels) within ~15 ms of onset,
+/// so 60 ms covers it — plus the ≥2-sample extension — with a wide margin
+/// while keeping a lightly-resting finger from hogging the handle.
+const MAD_RISING_TIMEOUT: Duration = Duration::from_millis(60);
 
 /// Held-key travel cadence (aftertouch / release tracking): ~100 Hz per key,
 /// polled as one pipelined batch.

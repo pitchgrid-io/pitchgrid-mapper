@@ -2,9 +2,15 @@ use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Arc;
 use std::time::Instant;
 
+use crossbeam_queue::SegQueue;
+
 use crate::channels::ChannelAllocator;
 use crate::midi::MidiBatch;
-use crate::velocity::VelocityConfig;
+use crate::velocity::{FireStats, VelocityConfig};
+
+/// One velocity-diagnostics record per NoteOn: (controller note, HID keycode,
+/// what the velocity was computed from). Drained by the host for analysis.
+pub type VelocityStatsQueue = SegQueue<(u8, u16, FireStats)>;
 
 pub mod mpe;
 pub mod piano_sim;
@@ -46,6 +52,9 @@ pub struct ProfileConfig {
     /// MIDI velocity (clamped to 1..=127). Stored as the bits of an f32 in
     /// an AtomicU32 so reads on the hot path are lock-free.
     pub sensitivity: Arc<AtomicU32>,
+    /// Fire-diagnostics sink: profiles that use the VelocityFsm push one
+    /// record per NoteOn. Lock-free; only ever written on note onset.
+    pub velocity_stats: Arc<VelocityStatsQueue>,
 }
 
 /// Read the current sensitivity factor (>= 0). Defaults to 1.0.
@@ -79,6 +88,7 @@ impl Default for ProfileConfig {
             master_sustain: Arc::new(AtomicBool::new(false)),
             per_note_sustain_enabled: Arc::new(AtomicBool::new(false)),
             sensitivity: Arc::new(AtomicU32::new((1.0f32).to_bits())),
+            velocity_stats: Arc::new(SegQueue::new()),
         }
     }
 }
