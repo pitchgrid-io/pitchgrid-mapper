@@ -5,7 +5,7 @@
 //! contention. Python drains a lock-free queue of MIDI bytes at a relaxed
 //! cadence and pushes those bytes into `MIDIHandler.inject_message(...)`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -610,142 +610,343 @@ fn rgb_thread_loop(inner: Arc<BridgeInner>) {
     }
 }
 
-/// Madlions analog poll loop. Reads per-key travel over `0xFF60` and feeds the
-/// active profile, exactly like `poll_thread_loop` does for Wooting — only the
-/// source differs. Rising keys (in the velocity window) get exclusive priority
-/// so fast strikes are sampled at ~kHz; otherwise we poll held keys plus one
-/// rotating background chunk to catch new presses.
+/// Raw-travel thresholds (0..=350) mirroring the velocity FSM's normalised
+/// off/trigger so the poll scheduler and the FSM agree on key phases.
+const MAD_OFF_RAW: u16 = 35; // ~0.10 — below this the key counts as released
+const MAD_TRIG_RAW: u16 = 180; // ~0.51 — at/above this the note has fired
+
+/// How long a key may sit in the rising phase (NKRO-down but not yet
+/// triggered) at full poll rate before being demoted to the held cadence.
+/// Covers max_dt (80 ms) with a wide margin; a finger resting lightly on a
+/// key must not hog the handle forever.
+const MAD_RISING_TIMEOUT: Duration = Duration::from_millis(300);
+
+/// Held-key travel cadence (aftertouch / release tracking): ~100 Hz per key,
+/// polled as one pipelined batch.
+const MAD_HELD_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Per-key scheduling state for the NKRO-driven loop.
+struct MadTrack {
+    /// Start of the current rise — reset when travel re-crosses OFF upward,
+    /// so a re-press of a not-fully-released key regains full-rate polling.
+    rising_since: Instant,
+    /// Note has fired (travel reached TRIG); cleared when travel falls below
+    /// OFF so the next press is treated as a fresh rise.
+    fired: bool,
+    last_raw: u16,
+}
+
+/// Feed one travel sample to the active profile; push resulting MIDI.
+fn mad_feed(inner: &Arc<BridgeInner>, keycode: u16, raw: u16, t: Instant) {
+    let depth = raw as f32 / TRAVEL_FULL;
+    if let Some(key) = inner.keymap.lookup(keycode) {
+        let batch = {
+            let mut prof = inner.profile.lock();
+            prof.process(key, keycode, depth, t)
+        };
+        for msg in batch {
+            inner.midi_outbox.push(msg.to_vec());
+        }
+    }
+}
+
+/// Flush the base+overlay colour layers as one 80-slot frame if due.
+fn mad_flush_rgb(
+    inner: &Arc<BridgeInner>,
+    mad: &Mutex<MadlionsDevice>,
+    xy_to_slot: &HashMap<(i16, i16), u16>,
+    last_rgb: &mut Instant,
+) {
+    let due = {
+        let pc = inner.pad_colors.lock();
+        pc.dirty || Instant::now().duration_since(*last_rgb) >= inner.rgb_refresh_interval
+    };
+    if !due {
+        return;
+    }
+    let mut frame = [(0u8, 0u8, 0u8); madlions::NUM_RGB_SLOTS];
+    {
+        let mut pc = inner.pad_colors.lock();
+        for (xy, &(r, g, b)) in pc.base.iter() {
+            let (r2, g2, b2) = pc.overlay.get(xy).copied().unwrap_or((r, g, b));
+            if let Some(&slot) = xy_to_slot.get(xy) {
+                if (slot as usize) < madlions::NUM_RGB_SLOTS {
+                    frame[slot as usize] = (r2, g2, b2);
+                }
+            }
+        }
+        pc.dirty = false;
+    }
+    {
+        let m = mad.lock();
+        m.write_rgb(&frame);
+    }
+    *last_rgb = Instant::now();
+}
+
+/// Madlions poll thread. Owns the whole 0xFF60/NKRO lifecycle:
+///
+/// 1. Saves the board's per-key actuation and rapid-trigger config, then
+///    forces actuation to the firmware-minimum 0.1 mm (so the digital NKRO
+///    report fires at the very top of travel — our onset interrupt) and
+///    disables rapid-trigger (its synthetic re-triggers would fight note
+///    on/off logic). Both are restored on exit, so the player's gaming
+///    profile survives a session untouched.
+/// 2. Runs the NKRO-driven sampling loop (or a full-scan fallback when the
+///    NKRO interface couldn't be opened).
+/// 3. Restores the saved config.
 fn madlions_poll_thread_loop(inner: Arc<BridgeInner>) {
     let Some(mad) = inner.madlions.as_ref() else {
         return;
     };
-    let (index_keycode, chunks, xy_to_slot) = {
+    let (index_keycode, all_chunks, xy_to_slot) = {
         let m = mad.lock();
         (m.index_to_keycode.clone(), m.chunks.clone(), m.xy_to_slot.clone())
     };
-    if chunks.is_empty() {
+    if all_chunks.is_empty() {
         return;
     }
+
+    // --- Save + override the board's HE config -----------------------------
+    let (saved_act, saved_rt, has_nkro) = {
+        let m = mad.lock();
+        let act = m.read_actuation();
+        let rt = m.read_rapid_trigger();
+        let act_ok = m.write_actuation_uniform(madlions::ACTUATION_ONSET_RAW);
+        let rt_ok = m.write_rapid_trigger_disabled();
+        log::info!(
+            "Madlions HE config: saved actuation={} rt={}; set 0.1mm onset={} rt-off={}",
+            act.is_some(),
+            rt.is_some(),
+            act_ok,
+            rt_ok
+        );
+        (act, rt, m.has_nkro())
+    };
+
+    if has_nkro {
+        madlions_nkro_loop(&inner, mad, &index_keycode, &xy_to_slot);
+    } else {
+        log::warn!("Madlions NKRO interface unavailable — falling back to full-scan polling");
+        madlions_scan_loop(&inner, mad, &index_keycode, &all_chunks, &xy_to_slot);
+    }
+
+    // --- Restore the player's config ---------------------------------------
+    {
+        let m = mad.lock();
+        if let Some(act) = saved_act {
+            m.write_actuation(&act);
+        }
+        if let Some(rt) = saved_rt {
+            m.write_rapid_trigger(&rt);
+        }
+        log::info!("Madlions HE config restored");
+    }
+}
+
+/// NKRO-driven sampling. The digital key bitmap (interrupt-driven, actuation
+/// at 0.1 mm) is the onset/release event source; travel polling is targeted:
+///
+///   rising keys (down, not yet fired) — pipelined polls at full rate
+///     (~0.33 ms/chunk) until the note triggers, so the velocity fit gets a
+///     dense, precisely-timestamped rising edge;
+///   held keys (fired) — one pipelined batch every 10 ms (~100 Hz/key) for
+///     aftertouch and release tracking;
+///   idle — no travel polling at all; the loop blocks on the NKRO read, so a
+///     new press wakes it within USB interrupt latency.
+fn madlions_nkro_loop(
+    inner: &Arc<BridgeInner>,
+    mad: &Mutex<MadlionsDevice>,
+    index_keycode: &HashMap<u16, u16>,
+    xy_to_slot: &HashMap<(i16, i16), u16>,
+) {
+    let usage_to_idx: HashMap<u16, u16> =
+        index_keycode.iter().map(|(&i, &u)| (u, i)).collect();
+
+    let mut nkro_bitmap = [0u8; 32];
+    let mut down: HashMap<u16, MadTrack> = HashMap::new(); // analog idx -> state
+    let mut sustain_down = false;
+    let mut last_held_poll = Instant::now();
     let mut last_rgb = Instant::now() - inner.rgb_refresh_interval;
 
-    // Raw-travel thresholds (0..=350) mirroring the velocity FSM's normalised
-    // arm/trigger/off so "rising" here means "between arm and trigger".
-    const OFF_RAW: u16 = 35; // ~0.10
-    const ARM_RAW: u16 = 45; // ~0.13
-    const TRIG_RAW: u16 = 180; // ~0.51
-
-    let mut last: HashMap<u16, u16> = HashMap::new(); // index -> travel
-    let mut nkro_bitmap = [0u8; 32]; // digital key-down bitmap (HID usage bits)
-    let mut nkro_down: HashSet<u16> = HashSet::new(); // analog indices down per NKRO
-
-    // Idle/held polling throttle. Continuous max-rate polling saturates the
-    // shared 0xFF60 handle and suppresses RGB display on macOS, so when no key
-    // is mid-strike we pace the loop; a rising key keeps full rate.
-    const IDLE_THROTTLE: Duration = Duration::from_micros(2500);
-
-    // A chunk needs full-rate (velocity) polling if any of its keys is in the
-    // analog arm..trigger window, OR the digital NKRO interface reports it down
-    // but it hasn't triggered yet — the latter starts velocity sampling the
-    // instant a key actuates, ahead of the throttled background scan.
-    let is_rising = |c: u8, last: &HashMap<u16, u16>, nkro_down: &HashSet<u16>| {
-        (0..KEYS_PER_POLL).any(|j| {
-            let idx = c as u16 + j;
-            if !index_keycode.contains_key(&idx) {
-                return false;
-            }
-            let d = last.get(&idx).copied().unwrap_or(0);
-            (d > ARM_RAW && d < TRIG_RAW) || (nkro_down.contains(&idx) && d < TRIG_RAW)
-        })
+    let bit = |bm: &[u8; 32], usage: u16| -> bool {
+        let u = usage as usize;
+        u / 8 < bm.len() && (bm[u / 8] & (1 << (u % 8))) != 0
     };
 
     while inner.running.load(Ordering::Relaxed) {
-        // Refresh the digital key-down set from the NKRO interface (no-op if
-        // that interface couldn't be opened).
-        mad.lock().read_nkro(&mut nkro_bitmap);
-        nkro_down.clear();
-        for (&idx, &usage) in &index_keycode {
-            let u = usage as usize;
-            if u / 8 < nkro_bitmap.len() && (nkro_bitmap[u / 8] & (1 << (u % 8))) != 0 {
-                nkro_down.insert(idx);
+        let any_rising = down
+            .values()
+            .any(|t| !t.fired && t.rising_since.elapsed() <= MAD_RISING_TIMEOUT);
+
+        // NKRO read: non-blocking while a strike is in progress (nothing may
+        // delay velocity sampling); otherwise block briefly so an idle loop
+        // wakes on the key-down interrupt instead of spinning.
+        let timeout = if any_rising { 0 } else { 2 };
+        if mad.lock().read_nkro_timeout(&mut nkro_bitmap, timeout) {
+            let now = Instant::now();
+
+            // Spacebar doubles as the sustain pedal (binary here: NKRO edge
+            // at the 0.1 mm onset actuation).
+            let space = bit(&nkro_bitmap, SPACEBAR_HID);
+            if space != sustain_down {
+                sustain_down = space;
+                push_sustain(inner, sustain_down);
+            }
+
+            // New key-downs: begin a rise, start full-rate polling.
+            for (&usage, &idx) in &usage_to_idx {
+                if bit(&nkro_bitmap, usage) {
+                    down.entry(idx).or_insert(MadTrack {
+                        rising_since: now,
+                        fired: false,
+                        last_raw: 0,
+                    });
+                }
+            }
+            // Releases: the bit clears when travel rises above 0.1 mm, which
+            // is below the FSM's off threshold — feed a zero sample so the
+            // profile emits NoteOff even if no travel poll caught the fall.
+            down.retain(|&idx, _| {
+                let usage = index_keycode[&idx];
+                if bit(&nkro_bitmap, usage) {
+                    true
+                } else {
+                    mad_feed(inner, usage, 0, now);
+                    false
+                }
+            });
+        }
+
+        // Decide what to poll this cycle.
+        let rising_chunks: Vec<u8> = {
+            let mut v: Vec<u8> = down
+                .iter()
+                .filter(|(_, t)| !t.fired && t.rising_since.elapsed() <= MAD_RISING_TIMEOUT)
+                .map(|(&idx, _)| ((idx / KEYS_PER_POLL) * KEYS_PER_POLL) as u8)
+                .collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        };
+
+        let to_poll: Vec<u8> = if !rising_chunks.is_empty() {
+            rising_chunks
+        } else if !down.is_empty() && last_held_poll.elapsed() >= MAD_HELD_INTERVAL {
+            last_held_poll = Instant::now();
+            let mut v: Vec<u8> = down
+                .keys()
+                .map(|&idx| ((idx / KEYS_PER_POLL) * KEYS_PER_POLL) as u8)
+                .collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        } else {
+            Vec::new()
+        };
+
+        let strike_in_progress = !to_poll.is_empty() && down.values().any(|t| !t.fired);
+
+        if !to_poll.is_empty() {
+            let results = {
+                let m = mad.lock();
+                m.poll_chunks(&to_poll)
+            };
+            for (off, travels, t) in results {
+                for j in 0..KEYS_PER_POLL {
+                    let idx = off as u16 + j;
+                    let Some(&keycode) = index_keycode.get(&idx) else {
+                        continue;
+                    };
+                    let raw = travels[j as usize];
+                    mad_feed(inner, keycode, raw, t);
+                    if let Some(track) = down.get_mut(&idx) {
+                        // Fresh rise after a partial release: re-promote to
+                        // full-rate polling so a re-press gets real velocity.
+                        if track.last_raw < MAD_OFF_RAW && raw >= MAD_OFF_RAW {
+                            track.rising_since = t;
+                        }
+                        if raw >= MAD_TRIG_RAW {
+                            track.fired = true;
+                        } else if raw < MAD_OFF_RAW {
+                            track.fired = false;
+                        }
+                        track.last_raw = raw;
+                    }
+                }
             }
         }
 
-        let rising: Vec<u8> = chunks
-            .iter()
-            .copied()
-            .filter(|&c| is_rising(c, &last, &nkro_down))
-            .collect();
-        let busy = !rising.is_empty();
+        // RGB rides the gaps: never while a strike is being velocity-sampled.
+        if !strike_in_progress {
+            mad_flush_rgb(inner, mad, xy_to_slot, &mut last_rgb);
+        }
+    }
 
-        let to_poll: Vec<u8> = if busy {
-            // A key is mid-strike: poll only its chunk(s) at full rate so the
-            // velocity FSM gets a dense rising edge.
-            rising
-        } else {
-            // Idle/held: one full scan per cycle (all chunks) so new presses are
-            // caught within a single sweep; the throttle below then frees the
-            // handle for RGB.
-            chunks.clone()
+    // Lift anything still sounding and release sustain.
+    let now = Instant::now();
+    for (&idx, _) in &down {
+        mad_feed(inner, index_keycode[&idx], 0, now);
+    }
+    if sustain_down {
+        push_sustain(inner, false);
+    }
+}
+
+/// Fallback when the NKRO interface can't be opened: throttled full scans of
+/// every mapped chunk (pipelined), with full-rate promotion for keys seen in
+/// the arm..trigger window. Onset latency is one scan (~4 ms) instead of the
+/// NKRO interrupt, and the throttle keeps RGB writes flowing.
+fn madlions_scan_loop(
+    inner: &Arc<BridgeInner>,
+    mad: &Mutex<MadlionsDevice>,
+    index_keycode: &HashMap<u16, u16>,
+    all_chunks: &[u8],
+    xy_to_slot: &HashMap<(i16, i16), u16>,
+) {
+    const IDLE_THROTTLE: Duration = Duration::from_micros(2500);
+    let mut last: HashMap<u16, u16> = HashMap::new();
+    let mut last_rgb = Instant::now() - inner.rgb_refresh_interval;
+
+    while inner.running.load(Ordering::Relaxed) {
+        let rising: Vec<u8> = {
+            let mut v: Vec<u8> = all_chunks
+                .iter()
+                .copied()
+                .filter(|&c| {
+                    (0..KEYS_PER_POLL).any(|j| {
+                        let idx = c as u16 + j;
+                        index_keycode.contains_key(&idx)
+                            && last
+                                .get(&idx)
+                                .map_or(false, |&d| d >= MAD_OFF_RAW && d < MAD_TRIG_RAW)
+                    })
+                })
+                .collect();
+            v.dedup();
+            v
         };
+        let busy = !rising.is_empty();
+        let to_poll: Vec<u8> = if busy { rising } else { all_chunks.to_vec() };
 
-        for off in to_poll {
-            let travels = {
-                let m = mad.lock();
-                m.poll_chunk(off)
-            };
-            let Some(travels) = travels else { continue };
-            let now = Instant::now();
+        let results = {
+            let m = mad.lock();
+            m.poll_chunks(&to_poll)
+        };
+        for (off, travels, t) in results {
             for j in 0..KEYS_PER_POLL {
                 let idx = off as u16 + j;
                 let Some(&keycode) = index_keycode.get(&idx) else {
                     continue;
                 };
-                let travel = travels[j as usize];
-                last.insert(idx, travel);
-                let depth = travel as f32 / TRAVEL_FULL;
-                if let Some(key) = inner.keymap.lookup(keycode) {
-                    let batch = {
-                        let mut prof = inner.profile.lock();
-                        prof.process(key, keycode, depth, now)
-                    };
-                    for msg in batch {
-                        inner.midi_outbox.push(msg.to_vec());
-                    }
-                }
+                let raw = travels[j as usize];
+                last.insert(idx, raw);
+                mad_feed(inner, keycode, raw, t);
             }
         }
 
-        // RGB flush — rate-limited to rgb_refresh_interval, coalesced via the
-        // pad_colors dirty flag. Interleaving RGB writes with analog polls on
-        // the shared handle is fine as long as polling is throttled (below).
-        let due = {
-            let pc = inner.pad_colors.lock();
-            pc.dirty || Instant::now().duration_since(last_rgb) >= inner.rgb_refresh_interval
-        };
-        if due {
-            let mut frame = [(0u8, 0u8, 0u8); madlions::NUM_RGB_SLOTS];
-            {
-                let mut pc = inner.pad_colors.lock();
-                for (xy, &(r, g, b)) in pc.base.iter() {
-                    let (r2, g2, b2) = pc.overlay.get(xy).copied().unwrap_or((r, g, b));
-                    if let Some(&slot) = xy_to_slot.get(xy) {
-                        if (slot as usize) < madlions::NUM_RGB_SLOTS {
-                            frame[slot as usize] = (r2, g2, b2);
-                        }
-                    }
-                }
-                pc.dirty = false;
-            }
-            {
-                let m = mad.lock();
-                m.write_rgb(&frame);
-            }
-            last_rgb = Instant::now();
-        }
-
-        // Pace idle/held polling so it can't saturate the shared handle and
-        // starve RGB; a rising key keeps full rate for accurate velocity.
         if !busy {
+            mad_flush_rgb(inner, mad, xy_to_slot, &mut last_rgb);
             std::thread::sleep(IDLE_THROTTLE);
         }
     }

@@ -17,3 +17,5 @@ relative path), with the MAD68HE plugged in:
 | `mad68_map_rgb_slots.py` | Re-discovers the 80-slot RGB wire order by lighting each slot and reading which key the analog poll sees. Use if a board variant's slot order differs from `slot = idx + idx//15`. Writes `mad68_rgb_slots.json`. |
 | `mad68_descriptors.py` | Dumps + parses the board's HID report descriptors (per interface). Useful to confirm capabilities / a new variant's layout. |
 | `mad68_poll_bench.py` | Benchmarks the `0xFF60` analog-poll round-trip rate (polls/sec, implied full-scan Hz). |
+| `mad68_pipeline_test.py` | Verifies the firmware answers pipelined travel requests in order and measures the throughput gain vs serialized polling. |
+| `verify_nkro_rewrite.py` | Interactive end-to-end check of the NKRO-driven loop: baseline actuation read → bridge session (play; NoteOn/Off + velocity + sustain printed) → confirms the board's actuation/rapid-trigger config was restored on stop. |

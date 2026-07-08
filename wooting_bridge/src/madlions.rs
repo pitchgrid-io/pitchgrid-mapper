@@ -1,12 +1,17 @@
 //! Madlions-family Hall-effect board support over the `0xFF60` vendor interface.
 //!
 //! Unlike Wooting boards (read through the Analog SDK), these keyboards do not
-//! stream analog — they *answer* per-key travel poll requests. We poll
-//! `02 96 1C` (4 keys/request, the firmware caps at 4) and normalise the
-//! big-endian travel (0..=350) to 0..=1. RGB is written as an 80-slot frame on
-//! the same interface. Both share one HID handle (serialised by the caller).
+//! stream analog — they *answer* per-key travel poll requests (`02 96 1C`,
+//! 4 keys/request, the firmware caps it at 4). The firmware queues pipelined
+//! requests and answers them in order (verified on-device: send N, read N,
+//! ~0.33 ms per response vs ~0.54 ms serialized), so `poll_chunks` fans out.
+//! Onset comes from the digital NKRO interface (report `0x06`, interrupt-
+//! driven) with the actuation point forced to its 0.1 mm firmware minimum
+//! while the bridge is active (`03 96 0D`; saved and restored on exit).
+//! RGB is written as an 80-slot frame on the same `0xFF60` handle.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use hidapi::{HidApi, HidDevice};
 
@@ -17,6 +22,29 @@ pub const TRAVEL_FULL: f32 = 350.0;
 const REPORT_LEN: usize = 33;
 pub const KEYS_PER_POLL: u16 = 4;
 pub const NUM_RGB_SLOTS: usize = 80;
+
+// Command bytes shared by the HE config protocol (from the community
+// reverse-engineering of the FGG web configurator, verified on-device).
+const CMD_READ: u8 = 0x02;
+const CMD_WRITE: u8 = 0x03;
+const SUBCMD_HE: u8 = 0x96;
+const OP_TRAVEL: u8 = 0x1C;
+const OP_ACTUATION: u8 = 0x0D;
+const OP_RAPID_TRIGGER: u8 = 0x0E;
+
+/// Actuation array geometry: 77 slots, of which 0..=69 are real keys.
+pub const ACT_SLOTS: usize = 77;
+const ACT_REAL: usize = 70;
+const ACT_WRITE_STARTS: [u8; 7] = [0, 11, 22, 33, 44, 55, 66];
+const ACT_READ_STARTS: [u8; 6] = [0x00, 0x0C, 0x18, 0x24, 0x30, 0x3C];
+/// Firmware minimum actuation: 0.1 mm (raw 0.01 mm units). This is the onset
+/// depth we force while the bridge is active so the NKRO report fires at the
+/// very top of the key's travel.
+pub const ACTUATION_ONSET_RAW: u16 = 10;
+
+/// Rapid-trigger array geometry: 72 slots, of which 0..=69 are real keys.
+pub const RT_SLOTS: usize = 72;
+const RT_REAL: usize = 70;
 
 pub struct MadlionsDevice {
     dev: HidDevice,
@@ -151,6 +179,35 @@ impl MadlionsDevice {
         updated
     }
 
+    /// Like `read_nkro`, but blocks up to `first_timeout_ms` for the first
+    /// report, then drains whatever else queued so `bitmap` reflects the most
+    /// recent state. Blocking here costs nothing: the NKRO interface is a
+    /// separate HID handle, and when nothing is pressed there is nothing else
+    /// for the poll loop to do — this is what turns the loop interrupt-driven.
+    pub fn read_nkro_timeout(&self, bitmap: &mut [u8; 32], first_timeout_ms: i32) -> bool {
+        let Some(dev) = self.nkro.as_ref() else {
+            return false;
+        };
+        let mut buf = [0u8; 64];
+        let mut updated = false;
+        let mut timeout = first_timeout_ms;
+        while let Ok(n) = dev.read_timeout(&mut buf, timeout) {
+            if n == 0 {
+                break;
+            }
+            timeout = 0; // only the first read blocks
+            if buf[0] == 0x06 && n >= 3 {
+                let copy = (n - 2).min(32);
+                bitmap[..copy].copy_from_slice(&buf[2..2 + copy]);
+                for b in &mut bitmap[copy..] {
+                    *b = 0;
+                }
+                updated = true;
+            }
+        }
+        updated
+    }
+
     /// Poll 4 keys starting at `offset`; returns raw travel (0..=350) per key.
     /// Requesting more than 4 keys makes the firmware return all zeros.
     ///
@@ -183,6 +240,219 @@ impl MadlionsDevice {
             *slot = (u16::from(buf[b]) << 8) | u16::from(buf[b + 1]);
         }
         Some(out)
+    }
+
+    /// Pipelined travel poll: send all requests back-to-back, then read the
+    /// responses. The firmware queues requests and answers them in order
+    /// (verified: 0/1600 out-of-order over 4-deep pipelines; ~0.33 ms per
+    /// response vs ~0.54 ms serialized), so N chunks cost roughly one
+    /// round-trip plus N-1 response gaps instead of N full round-trips.
+    ///
+    /// Each returned entry carries the `Instant` its response was read, so
+    /// velocity fitting sees true per-sample timestamps even when a batch
+    /// spans more than a millisecond. On any out-of-order response the
+    /// remaining reads are abandoned and the queue drained (a partial batch
+    /// with correct attribution beats a full batch with phantom notes).
+    pub fn poll_chunks(&self, offsets: &[u8]) -> Vec<(u8, [u16; 4], Instant)> {
+        let mut buf = [0u8; 64];
+        // Resync: drop any stale responses from a previous, aborted batch.
+        while matches!(self.dev.read_timeout(&mut buf, 0), Ok(n) if n > 0) {}
+
+        let mut sent = 0usize;
+        for &off in offsets {
+            let mut req = [0u8; REPORT_LEN];
+            req[1] = CMD_READ;
+            req[2] = SUBCMD_HE;
+            req[3] = OP_TRAVEL;
+            req[7] = off;
+            req[8] = KEYS_PER_POLL as u8;
+            if self.dev.write(&req).is_err() {
+                break;
+            }
+            sent += 1;
+        }
+
+        let mut out = Vec::with_capacity(sent);
+        for &expected in &offsets[..sent] {
+            let Ok(n) = self.dev.read_timeout(&mut buf, 15) else {
+                break;
+            };
+            if n < 27 {
+                break;
+            }
+            if buf[0] != CMD_READ || buf[1] != SUBCMD_HE || buf[2] != OP_TRAVEL
+                || buf[6] != expected
+            {
+                // Desync — drain and bail with what we have.
+                while matches!(self.dev.read_timeout(&mut buf, 0), Ok(n) if n > 0) {}
+                break;
+            }
+            let t = Instant::now();
+            let mut travels = [0u16; 4];
+            for (j, slot) in travels.iter_mut().enumerate() {
+                let b = 10 + j * 5;
+                *slot = (u16::from(buf[b]) << 8) | u16::from(buf[b + 1]);
+            }
+            out.push((expected, travels, t));
+        }
+        out
+    }
+
+    /// Write a config request and wait for the matching `02 96 <opcode>`
+    /// response, skipping write-echo ACKs (`03 96 ...`) and unrelated reports.
+    fn he_read_response(&self, req: &[u8; REPORT_LEN], opcode: u8, buf: &mut [u8; 64]) -> bool {
+        while matches!(self.dev.read_timeout(buf, 0), Ok(n) if n > 0) {}
+        if self.dev.write(req).is_err() {
+            return false;
+        }
+        for _ in 0..8 {
+            match self.dev.read_timeout(buf, 40) {
+                Ok(n) if n >= 8 => {
+                    if buf[0] == CMD_READ && buf[1] == SUBCMD_HE && buf[2] == opcode {
+                        return true;
+                    }
+                    // Not ours (echo/ACK or a stray travel reply) — keep reading.
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Read the per-key actuation array (raw 0.01 mm units, `ACT_SLOTS` long).
+    /// None if any chunk fails — callers must not restore a partial array.
+    pub fn read_actuation(&self) -> Option<Vec<u16>> {
+        let mut arr = vec![0u16; ACT_SLOTS];
+        let mut buf = [0u8; 64];
+        for &start in &ACT_READ_STARTS {
+            let mut req = [0u8; REPORT_LEN];
+            req[1] = CMD_READ;
+            req[2] = SUBCMD_HE;
+            req[3] = OP_ACTUATION;
+            req[7] = start;
+            req[8] = 0x0C; // 12 entries per read chunk
+            if !self.he_read_response(&req, OP_ACTUATION, &mut buf) {
+                return None;
+            }
+            // Response: data[6]=start, data[7]=count, entries u16be from data[8].
+            let (rs, count) = (buf[6] as usize, buf[7] as usize);
+            for k in 0..count {
+                let b = 8 + k * 2;
+                if rs + k < ACT_SLOTS && b + 1 < 64 {
+                    arr[rs + k] = (u16::from(buf[b]) << 8) | u16::from(buf[b + 1]);
+                }
+            }
+        }
+        Some(arr)
+    }
+
+    /// Write the full per-key actuation array (7 chunks; the last chunk's flag
+    /// 0x02 applies the change). Byte layout per the FGG capture.
+    pub fn write_actuation(&self, arr: &[u16]) -> bool {
+        let last = ACT_WRITE_STARTS.len() - 1;
+        for (ci, &start) in ACT_WRITE_STARTS.iter().enumerate() {
+            let mut pkt = [0u8; REPORT_LEN];
+            pkt[1] = CMD_WRITE;
+            pkt[2] = SUBCMD_HE;
+            pkt[3] = OP_ACTUATION;
+            pkt[7] = start;
+            pkt[8] = 0x0B; // 11 entries per write chunk
+            pkt[9] = if ci == 0 { 0x01 } else if ci == last { 0x02 } else { 0x00 };
+            for k in 0..11usize {
+                let idx = start as usize + k;
+                let v = if idx < arr.len() { arr[idx] } else { 0 };
+                pkt[10 + k * 2] = (v >> 8) as u8;
+                pkt[11 + k * 2] = v as u8;
+            }
+            if self.dev.write(&pkt).is_err() {
+                return false;
+            }
+        }
+        // The board echoes each write chunk as an ACK; clear them out.
+        let mut buf = [0u8; 64];
+        while matches!(self.dev.read_timeout(&mut buf, 5), Ok(n) if n > 0) {}
+        true
+    }
+
+    /// Write a uniform actuation depth to every real key (pads stay 0).
+    pub fn write_actuation_uniform(&self, raw: u16) -> bool {
+        let mut arr = vec![0u16; ACT_SLOTS];
+        arr[..ACT_REAL].fill(raw);
+        self.write_actuation(&arr)
+    }
+
+    /// Read the per-key rapid-trigger array: (enable, reset_raw, rapid_raw)
+    /// per slot. None if any chunk fails.
+    pub fn read_rapid_trigger(&self) -> Option<Vec<(u8, u16, u16)>> {
+        let mut arr = vec![(0u8, 0u16, 0u16); RT_SLOTS];
+        let mut buf = [0u8; 64];
+        for start in (0..RT_SLOTS as u8).step_by(4) {
+            let mut req = [0u8; REPORT_LEN];
+            req[1] = CMD_READ;
+            req[2] = SUBCMD_HE;
+            req[3] = OP_RAPID_TRIGGER;
+            req[7] = start;
+            req[8] = 0x04;
+            if !self.he_read_response(&req, OP_RAPID_TRIGGER, &mut buf) {
+                return None;
+            }
+            let (rs, count) = (buf[6] as usize, buf[7] as usize);
+            for e in 0..count {
+                let b = 8 + e * 5;
+                if rs + e < RT_SLOTS && b + 4 < 64 {
+                    arr[rs + e] = (
+                        buf[b],
+                        (u16::from(buf[b + 1]) << 8) | u16::from(buf[b + 2]),
+                        (u16::from(buf[b + 3]) << 8) | u16::from(buf[b + 4]),
+                    );
+                }
+            }
+        }
+        Some(arr)
+    }
+
+    /// Write the full rapid-trigger array (18 chunks of 4; last flag applies).
+    pub fn write_rapid_trigger(&self, arr: &[(u8, u16, u16)]) -> bool {
+        let starts: Vec<u8> = (0..RT_SLOTS as u8).step_by(4).collect();
+        let last = starts.len() - 1;
+        for (ci, &start) in starts.iter().enumerate() {
+            let mut pkt = [0u8; REPORT_LEN];
+            pkt[1] = CMD_WRITE;
+            pkt[2] = SUBCMD_HE;
+            pkt[3] = OP_RAPID_TRIGGER;
+            pkt[7] = start;
+            pkt[8] = 0x04;
+            pkt[9] = if ci == 0 { 0x01 } else if ci == last { 0x02 } else { 0x00 };
+            for e in 0..4usize {
+                let idx = start as usize + e;
+                let (en, reset, rapid) = if idx < arr.len() { arr[idx] } else { (0, 0, 0) };
+                let b = 10 + e * 5;
+                pkt[b] = en;
+                pkt[b + 1] = (reset >> 8) as u8;
+                pkt[b + 2] = reset as u8;
+                pkt[b + 3] = (rapid >> 8) as u8;
+                pkt[b + 4] = rapid as u8;
+            }
+            if self.dev.write(&pkt).is_err() {
+                return false;
+            }
+        }
+        let mut buf = [0u8; 64];
+        while matches!(self.dev.read_timeout(&mut buf, 5), Ok(n) if n > 0) {}
+        true
+    }
+
+    /// Disable rapid-trigger on every real key. Rapid-trigger re-fires the
+    /// digital key state on micro-movements — musically that would fake
+    /// note-offs mid-press and fight the NKRO onset logic, so the bridge
+    /// turns it off while active (restored on exit). Travels are left at the
+    /// firmware default 0.50 mm so a stale enable bit behaves sanely.
+    pub fn write_rapid_trigger_disabled(&self) -> bool {
+        let mut arr = vec![(0u8, 50u16, 50u16); RT_SLOTS];
+        for pad in arr.iter_mut().skip(RT_REAL) {
+            *pad = (0, 0, 0);
+        }
+        self.write_rapid_trigger(&arr)
     }
 
     /// Send an 80-slot RGB frame followed by the commit packet.
